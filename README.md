@@ -1,8 +1,50 @@
-# regression-uncertainty
-
+# Uncertainty & Regression
 ## 1. Usage
-## 2. Directories
+### Configs
+To specify the parameters and training strategies of the model, `yaml` file format
+is being used. 
 
+
+```yaml
+network: # basic MLP layer configuration
+  num_networks: 5
+  layer_sizes: [16,32]
+dataset: # for now, just use toy-dataset
+  class: 'ToyData'
+  func: 
+train:
+  batch_size : 32   
+  num_iter : 10000
+  print_every : 2500
+test:
+  batch_size : 32
+```
+> Example config file.
+> 
+## 2. File Structure
+```
+|-- ./estimations
+|   |-- ./estimations/__init__.py
+|   |-- ./estimations/ensemble.py
+|-- ./tools
+|   `-- ./tools/train.py
+|-- ./utils
+|   |-- ./utils/__init__.py
+|   |-- ./utils/logger.py
+|   |-- ./utils/device.py
+|   |-- ./utils/clearml.py
+|-- ./figures
+|   |-- ./figures/non-weight.png
+|   `-- ./figures/weighted.png
+|-- ./datasets
+|   |-- ./datasets/__init__.py
+|   |-- ./datasets/toydata.py
+|   |-- ./datasets/toyfunc.py
+|   |-- ./datasets/concrete.py
+|-- ./configs
+|   |-- ./configs/concrete_dataset.yaml
+|   `-- ./configs/toy_dataset.yaml                                                              
+```
 ---
 ## Papers:
 This section covers some of the well-known paper for imbalanced learning and uncertainity estimation for regression tasks.
@@ -22,4 +64,4 @@ classified as (i) bayesian and (ii) non-bayesian methods.
 - 
 #### (ii) Non-bayesian Methods
 - [Simple and Scalable Predictive Uncertainty Estimation using Deep Ensembles](https://arxiv.org/abs/1612.01474)
-- 
+
