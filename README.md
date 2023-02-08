@@ -1,5 +1,5 @@
 # Uncertainty & Regression
-## 1. Usage
+## 1. Usage
 ### Configs
 To specify the parameters and training strategies of the model, `yaml` file format
 is being used. 
