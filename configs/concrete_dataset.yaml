@@ -1,0 +1,12 @@
+network: # basic MLP layer configuration
+  num_networks: 5
+  layer_sizes: [64,128,256]
+dataset: # for now, just use toy-dataset
+  class: 'XLSData'
+  xls_path: "Concrete_Data.xls"
+train:
+  batch_size : 32   
+  num_iter : 10000
+  print_every : 2500
+test:
+  batch_size : 32

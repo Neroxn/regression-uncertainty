@@ -1,0 +1,12 @@
+network: # basic MLP layer configuration
+  num_networks: 5
+  layer_sizes: [16,32]
+dataset: # for now, just use toy-dataset
+  class: 'ToyData'
+  func: 
+train:
+  batch_size : 32   
+  num_iter : 10000
+  print_every : 2500
+test:
+  batch_size : 32
