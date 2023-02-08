@@ -1,12 +1,11 @@
 # regression-uncertainty
-A framework for measuring and using uncertainity on regression tasks.
 
 ## 1. Usage
 ## 2. Directories
 
 ---
 ## Papers:
-This section covers some of the well-known paper.
+This section covers some of the well-known paper for imbalanced learning and uncertainity estimation for regression tasks.
 ### Imbalanced Regression:
 Imbalanced regression are the collection of method that try to increase model performances for 
 the areas where model in unsure due to the lack of training data.
