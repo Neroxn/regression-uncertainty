@@ -80,6 +80,9 @@ class WandbLogger(NetworkLogger):
     def log_metric(self, metric_name, metric_value, step):
         wandb.log({metric_name: metric_value}, step=step)
 
+    def log_meta(self, meta_dict):
+        wandb.config.update(meta_dict)
+
 class ClearmlLogger(NetworkLogger):
     """ Logger for logging network training to clearml. """
     def __init__(self, **kwargs):
@@ -88,13 +91,17 @@ class ClearmlLogger(NetworkLogger):
         self.init_logger(kwargs)
 
     def init_logger(self, **kwargs):
-        self.logger = clearml.Task.init(**kwargs).get_logger()
+        self.task = clearml.Task.init(**kwargs)
+        self.logger = self.task.get_logger()
 
     def log_metric(self, metric_name, metric_value, step):
         self.logger.report_scalar(title=metric_name, series=metric_name, value=metric_value, iteration=step)
 
     def log_matplotlib_figure(self, figure, figure_name, step):
         self.logger.report_matplotlib_figure(figure=figure, figure_name=figure_name, iteration=step)
+        
+    def log_meta(self, meta_dict):
+        self.task.connect(meta_dict)
         
 class TensorboardLogger(NetworkLogger):
     """ Logger for logging network training to tensorboard. """
