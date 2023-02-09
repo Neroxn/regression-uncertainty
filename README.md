@@ -8,18 +8,22 @@ is being used.
 ```yaml
 network: # basic MLP layer configuration
   num_networks: 5
-  layer_sizes: [16,32]
+  layer_sizes: [64,128,256]
 dataset: # for now, just use toy-dataset
-  class: 'ToyData'
-  func: 
+  class: 'xls'
+  xls_path: "Concrete_Data.xls"
 train:
   batch_size : 32   
   num_iter : 10000
   print_every : 2500
 test:
   batch_size : 32
+logger:
+  type: 'wandb'
+  project: 'uncertainty-estimation'
+  entity: 'kbora'
 ```
-> Example config file.
+> Example config file for Concrete dataset. 
 > 
 ## 2. File Structure
 ```
@@ -61,7 +65,7 @@ classified as (i) bayesian and (ii) non-bayesian methods.
 #### (i) Bayesian Methods
 - [Depth Uncertainty in Neural Networks](https://arxiv.org/abs/2006.08437) | [github](https://github.com/cambridge-mlg/DUN)
 - [Dropout as a Bayesian Approximation: Representing Model Uncertainty in Deep Learning](https://arxiv.org/abs/1506.02142) | [github](https://github.com/cambridge-mlg/DUN) 
-- 
+
 #### (ii) Non-bayesian Methods
 - [Simple and Scalable Predictive Uncertainty Estimation using Deep Ensembles](https://arxiv.org/abs/1612.01474)
 
