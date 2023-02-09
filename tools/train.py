@@ -110,6 +110,10 @@ if __name__ == '__main__':
 
     # setup metric logger
     metric_logger = create_logger(logger_config)
+
+    # log the config file
+    metric_logger.log_meta(config)
+
     logger.info(f"Created metric logger : {metric_logger}")
 
     # train the networks
@@ -122,7 +126,9 @@ if __name__ == '__main__':
         device,
         num_iter = train_config["num_iter"],
         print_every = train_config["print_every"],
+        weighted = train_config["weighted"],
         logger = metric_logger,
+        ds_stats = (x_stats, y_stats) if dataset_config.get("class", None) == "xls" else None
     )
 
     logger.info("Testing networks")
