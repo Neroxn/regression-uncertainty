@@ -1,5 +1,27 @@
 import logging
 
+LOGGER_CHECK = {}
+try:
+    import wandb
+    LOGGER_CHECK["wandb"] = True
+except ImportError:
+    LOGGER_CHECK["wandb"] = False
+
+try:
+    import clearml
+    LOGGER_CHECK["clearml"] = True
+except ImportError:
+    LOGGER_CHECK["clearml"] = False
+    pass
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    LOGGER_CHECK["tensorboard"] = True
+except ImportError:
+    LOGGER_CHECK["tensorboard"] = False
+    pass
+
+
 def pretty_dict_print(dictionary : dict):
     """
     Print a dictionary in a pretty way
@@ -36,3 +58,53 @@ def set_logger():
     logger.addHandler(fh)
 
     return logger
+
+class NetworkLogger(object):
+    """ Base class for logging network training. """
+
+    def log_metric(self, **kwargs):
+        """ Log a metric using the logger."""
+        raise NotImplementedError
+
+    def init_logger(self):
+        """ Initialize the logger. """
+        raise NotImplementedError
+
+class WandbLogger(NetworkLogger):
+    """ Logger for logging network training to wandb. """
+    def __init__(self, **kwargs):
+        if LOGGER_CHECK["wandb"] is False:
+            raise ImportError("wandb is not installed")
+        wandb.init(**kwargs)
+
+    def log_metric(self, metric_name, metric_value, step):
+        wandb.log({metric_name: metric_value}, step=step)
+
+class ClearmlLogger(NetworkLogger):
+    """ Logger for logging network training to clearml. """
+    def __init__(self, **kwargs):
+        if LOGGER_CHECK["clearml"] is False:
+            raise ImportError("clearml is not installed")
+        self.init_logger(kwargs)
+
+    def init_logger(self, **kwargs):
+        self.logger = clearml.Task.init(**kwargs).get_logger()
+
+    def log_metric(self, metric_name, metric_value, step):
+        self.logger.report_scalar(title=metric_name, series=metric_name, value=metric_value, iteration=step)
+
+    def log_matplotlib_figure(self, figure, figure_name, step):
+        self.logger.report_matplotlib_figure(figure=figure, figure_name=figure_name, iteration=step)
+        
+class TensorboardLogger(NetworkLogger):
+    """ Logger for logging network training to tensorboard. """
+    def __init__(self, **kwargs):
+        if LOGGER_CHECK["tensorboard"] is False:
+            raise ImportError("tensorboard is not installed")
+        self.init_logger(kwargs)
+
+    def init_logger(self, **kwargs):
+        self.logger = SummaryWriter(**kwargs)
+
+    def log_metric(self, metric_name, metric_value, step):
+        self.logger.add_scalar(metric_name, metric_value, step)

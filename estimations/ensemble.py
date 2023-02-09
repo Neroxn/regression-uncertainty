@@ -62,7 +62,13 @@ def sig_positive(x):
     """
     return torch.log(1 + torch.exp(x)) + 1e-6
 
-def train_multiple_networks(train_dataloader, val_dataloader, networks, optimizers, device, **kwargs):
+def train_multiple_networks(
+    train_dataloader,
+    val_dataloader,
+    networks,
+    optimizers,
+    device,
+    **kwargs):
     """
     Train ensamble of networks.
     Args:
@@ -77,18 +83,20 @@ def train_multiple_networks(train_dataloader, val_dataloader, networks, optimize
     num_iters = kwargs.get('num_iter', 1000)
     print_every = kwargs.get('print_every', 100)
     batch_size = kwargs.get('batch_size', 32)
+    logger = kwargs.get('logger', None)
 
     num_networks = len(networks)
     out_mu = np.zeros((batch_size, num_networks))
     out_sig = np.zeros((batch_size, num_networks))
     loss_train = np.zeros((num_networks))
+    mse_train = np.zeros((num_networks))
 
+    for k in range(num_networks):
+        networks[k] = networks[k].to(device)
     for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
         test_batch_x, test_batch_y = next(iter(val_dataloader)) # this effectively samples a random batch
 
         for k in range(num_networks):
-            # move network to device
-            networks[k].to(device)
 
             # move data to device
             batch_x, batch_y = next(iter(train_dataloader)) # sample random batch
@@ -100,10 +108,10 @@ def train_multiple_networks(train_dataloader, val_dataloader, networks, optimize
 
             sigma_train_pos = sig_positive(sigma_train)
 
-            #weights = (1 - torch.sigmoid(sigma_train_pos)).detach() # we want high variance to have low weight
+            weights = (1 - torch.tanh(sigma_train_pos)).detach() # we want high variance to have low weight
 
             loss = torch.mean(
-                (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)
+                (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)*weights
                 ) + 3
 
             if torch.isnan(loss):
@@ -114,6 +122,20 @@ def train_multiple_networks(train_dataloader, val_dataloader, networks, optimize
             optimizers[k].step()
 
             loss_train[k] += loss.item()
+            mse_train[k] = torch.mean(torch.square(batch_y - mu_train)).detach().item()
+
+            if logger is not None:
+                logger.log_metric(
+                    metric_name = f"loss_{k}",
+                    metric_value = loss_train[k],
+                    step = num_iter)
+
+                # log mse for mean
+                logger.log_metric(
+                    metric_name = f"mse_mu_{k}",
+                    metric_value = mse_train[k],
+                    step = num_iter)
+
 
             # get the network prediction for the test data
             with torch.no_grad():
@@ -125,21 +147,39 @@ def train_multiple_networks(train_dataloader, val_dataloader, networks, optimize
         out_mu_final = np.mean(out_mu, axis=1) # average over the networks
         out_sig_final = np.sqrt(np.mean(out_sig, axis=1) + np.mean(np.square(out_mu), axis = 1) - np.square(out_mu_final))
 
-        if num_iter % print_every == 0 and num_iter != 0:
-            print(('-------------------------') + ' Iteration: ' + str(num_iter) + ' -------------------------')
-            print('Average Loss(NLL): ' + str(loss_train / print_every))
-            print('x: ' + str(batch_x[0]))
-            print('mu: ' + str(out_mu[0, :]))
-            print('std: ' + str(np.sqrt(out_sig[0, :])))
-            print('Final mu: ' + str(out_mu_final[0]))
-            print('Final std: ' + str(out_sig_final[0]))
-            print('Real Value: ' + str(test_batch_y[0]))
-            print('\n')
+        if logger is not None:
+            logger.log_metric(
+                metric_name = f"loss",
+                metric_value = np.mean(loss_train),
+                step = num_iter)
 
-            loss_train = np.zeros((num_networks))
+            logger.log_metric(
+                metric_name = f"mse_mu",
+                metric_value = np.mean(mse_train),
+                step = num_iter)
+
+            logger.log_metric(
+                metric_name = f"mse_final",
+                metric_value = np.mean(np.square(out_mu_final - test_batch_y.numpy().flatten())),
+                step = num_iter)
+
+        # if num_iter % print_every == 0 and num_iter != 0:
+        #     print(('-------------------------') + ' Iteration: ' + str(num_iter) + ' -------------------------')
+        #     print('Average Loss(NLL): ' + str(loss_train / print_every))
+        #     print('x: ' + str(batch_x[0]))
+        #     print('mu: ' + str(out_mu[0, :]))
+        #     print('std: ' + str(np.sqrt(out_sig[0, :])))
+        #     print('Final mu: ' + str(out_mu_final[0]))
+        #     print('Final std: ' + str(out_sig_final[0]))
+        #     print('Real Value: ' + str(test_batch_y[0]))
+        #     print('\n')
+
+        loss_train = np.zeros((num_networks))
+        mse_train = np.zeros((num_networks))
+
     return networks
 
-def test_multiple_networks(x_sample,networks, device, **kwaargs):
+def test_multiple_networks(x_sample,networks, device, **kwargs):
     """
     Test the ensamble of networks.
     Args:
@@ -150,7 +190,10 @@ def test_multiple_networks(x_sample,networks, device, **kwaargs):
         np.ndarray: predicted mean array
         np.ndarray: predicted standard deviation array
     """
+    logger = kwargs.get('logger', None)
+
     num_networks = len(networks)
+    
 
     x_sample_tensor = torch.from_numpy(x_sample).float().to(device)
 

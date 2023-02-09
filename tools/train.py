@@ -15,9 +15,11 @@ from utils.device import set_device, set_random
 from estimations.ensemble import (VarianceNetwork, create_multiple_networks, train_multiple_networks
                                   ,test_multiple_networks)
 
-from datasets.toydata import create_toy_dataloader
+from datasets.toydata import create_toy_dataloader, sample_toy_data, plot_toy_results
 from datasets.toyfunc import toy_func_mixed
-from datasets.concrete import create_xls_dataloader
+from datasets.xlsdata import create_xls_dataloader
+
+from utils import create_logger
 
 def parse_config(config_path):
     """
@@ -43,6 +45,15 @@ def parse_args():
         '--device',
         help='Device to use. Use available device in the order of cuda, metal and cpu if not provided',
         default=None)
+    parser.add_argument(
+        '--seed',
+        help='Random seed to use. Use a random seed if not provided',
+        default=42)
+    parser.add_argument(
+        '--save_dir',
+        help='Directory to save the results',
+        default=None)
+
     return parser.parse_args()
 
 
@@ -61,17 +72,22 @@ if __name__ == '__main__':
     dataset_config = config["dataset"]
     train_config = config["train"]
     dataset_config = config["dataset"]
+    logger_config = config["logger"]
+
+
 
     # create dataloaders
     logger.info("Creating dataloaders")
-    if dataset_config.get("class", None) == "ToyData":
+    if dataset_config.get("class", None) == "toy":
         toy_func = toy_func_mixed()
         train_loader, val_loader, train_ds, val_ds = create_toy_dataloader(
             train_config["batch_size"],
             toy_func,
         )
-    elif dataset_config.get("class", None) == "XLSData":
-        train_loader, val_loader, train_ds, val_ds = create_xls_dataloader(
+        x_sample, y_sample = sample_toy_data(toy_func, -7, 7, 0.1)
+
+    elif dataset_config.get("class", None) == "xls":
+        train_loader, val_loader, train_ds, val_ds, x_stats, y_stats = create_xls_dataloader(
             train_config["batch_size"],
             dataset_config["xls_path"]
         )
@@ -92,6 +108,10 @@ if __name__ == '__main__':
     )
     logger.info(f"Created network : {networks[-1]}")
 
+    # setup metric logger
+    metric_logger = create_logger(logger_config)
+    logger.info(f"Created metric logger : {metric_logger}")
+
     # train the networks
     logger.info("Training networks")
     networks = train_multiple_networks(
@@ -101,31 +121,26 @@ if __name__ == '__main__':
         optimizers,
         device,
         num_iter = train_config["num_iter"],
-        print_every = train_config["print_every"]
+        print_every = train_config["print_every"],
+        logger = metric_logger,
     )
-
-    # test the networks
-    x_sample = np.arange(-12, 12 + 0.1, 0.1)
-
-    x_sample = np.reshape(x_sample, [x_sample.shape[0], 1])
 
     logger.info("Testing networks")
     data_mu, data_sig = test_multiple_networks(
         x_sample,
         networks,
-        device
+        device,
+        logger = metric_logger
     )
 
-    plt.figure(1)
-
-    # shape x_sample to be [num_samples,] 
-    x_sample = x_sample.reshape(-1)
-    y_sample = toy_func(x_sample)
-
-    plt.plot(train_ds.x, train_ds.y, 'b*', label='train data', zorder=1, alpha=0.5)
-    plt.plot(x_sample, y_sample, 'r', linewidth = 2, label='y=sin(x)', zorder=1)
-    plt.plot(x_sample, data_mu, 'g', linewidth = 2, label='mean', zorder=1)
-    plt.fill_between(x_sample, data_mu - data_sig, data_mu + data_sig, color='g', alpha=0.4, label = "variance", zorder=2)
-
-    plt.legend()
-    plt.show()
+if dataset_config.get("class", None) == "toy":
+    plot_toy_results(
+        x_sample.reshape(-1),
+        y_sample.reshape(-1),
+        train_ds,
+        data_mu,
+        data_sig,
+        save_path=args.save_dir
+    )
+else:
+    pass

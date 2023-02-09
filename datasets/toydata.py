@@ -108,13 +108,13 @@ def make_toy_dataset2(test_ratio = 0.2, func : Callable = None):
     print("Train data shape: " + str(train_x.shape))
     print("Test data shape: " + str(test_x.shape))
 
-    plt.plot(train_x, train_y, 'b*', markersize=1)
-    plt.plot(test_x, test_y, 'y*', markersize=1)
-    plt.plot(data_x1, data_y1_true, 'r')
-    plt.plot(data_x2, data_y2_true, 'r')
-    plt.legend(['Data', 'y=x^3'], loc = 'best')
-    plt.title('y = sin(x) + $\epsilon$')
-    plt.show()
+    # plt.plot(train_x, train_y, 'b*', markersize=1)
+    # plt.plot(test_x, test_y, 'y*', markersize=1)
+    # plt.plot(data_x1, data_y1_true, 'r')
+    # plt.plot(data_x2, data_y2_true, 'r')
+    # plt.legend(['Data', 'y=x^3'], loc = 'best')
+    # plt.title('y = sin(x) + $\epsilon$')
+    # plt.show()
     return train_x, train_y, test_x, test_y
 
 def create_toy_dataloader(batch_size, func : Callable, test_ratio=0.2):
@@ -135,3 +135,49 @@ def create_toy_dataloader(batch_size, func : Callable, test_ratio=0.2):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
     return train_loader, test_loader, train_dataset, test_dataset
+
+
+def sample_toy_data(func : Callable, start : float, end : float, step : float):
+    """
+    Using a function, sample data between two points.
+
+    Arguments:
+        - func (Callable): the function to sample from
+        - start (float): the start of the range
+        - end (float): the end of the range
+        - step (float): the step size
+    
+    Returns:
+        - x (np.ndarray): the x values
+        - y (np.ndarray): the y values
+    """
+    x_sample = np.arange(start, end + step, step)
+    x_sample = np.reshape(x_sample, [x_sample.shape[0], 1]) # reshape to column vector
+    y_sample = func(x_sample)
+    return x_sample, y_sample
+
+
+def plot_toy_results(
+    x_sample : np.ndarray,
+    y_sample : np.ndarray,
+    train_ds : Dataset,
+    data_mu : np.ndarray,
+    data_sig : np.ndarray,
+    save_path : str = None):
+    """
+    Plot the mu/variance results for the toy dataset.
+    Arguments:
+        - x_sample (np.ndarray): the x values
+        - y_sample (np.ndarray): the y values
+        - train_ds (Dataset): the training dataset
+        - data_mu (np.ndarray): the mean predictions
+        - data_sig (np.ndarray): the variance predictions
+        - save_path (str) : the path to save the plot to
+    """
+    plt.figure(1)
+    plt.plot(train_ds.x, train_ds.y, 'b*', label='train data', zorder=1, alpha=0.5)
+    plt.plot(x_sample, y_sample, 'r', linewidth = 2, label='y=sin(x)', zorder=1)
+    plt.plot(x_sample, data_mu, 'g', linewidth = 2, label='mean', zorder=1)
+    plt.fill_between(x_sample, data_mu - data_sig, data_mu + data_sig, color='g', alpha=0.4, label = "variance", zorder=2)
+    plt.legend()
+    plt.savefig(save_path)

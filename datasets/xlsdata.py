@@ -86,12 +86,6 @@ def create_xls_dataloader(batch_size, xls_path, test_ratio=0.2):
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
-    return train_loader, test_loader, train_dataset, test_dataset
-
-if __name__ == "__main__":
-    xls_path = "Concrete_Data.xls"
-    train_loader, test_loader, train_ds, test_ds = create_xls_dataloader(2, xls_path)
-    print(next(iter(train_loader)), )
-
+    return train_loader, test_loader, train_dataset, test_dataset, (x_mean, x_std), (y_mean, y_std)
 
     
