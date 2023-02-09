@@ -27,27 +27,32 @@ logger:
 > 
 ## 2. File Structure
 ```
-|-- ./estimations
-|   |-- ./estimations/__init__.py
-|   |-- ./estimations/ensemble.py
-|-- ./tools
-|   `-- ./tools/train.py
-|-- ./utils
-|   |-- ./utils/__init__.py
-|   |-- ./utils/logger.py
-|   |-- ./utils/device.py
-|   |-- ./utils/clearml.py
-|-- ./figures
-|   |-- ./figures/non-weight.png
-|   `-- ./figures/weighted.png
-|-- ./datasets
-|   |-- ./datasets/__init__.py
-|   |-- ./datasets/toydata.py
-|   |-- ./datasets/toyfunc.py
-|   |-- ./datasets/concrete.py
-|-- ./configs
-|   |-- ./configs/concrete_dataset.yaml
-|   `-- ./configs/toy_dataset.yaml                                                              
+.
+└── regression-uncertainty
+    ├── LICENSE
+    ├── README.md
+    ├── configs
+    │   ├── toy_dataset.yaml
+    │   └── xls_dataset.yaml
+    ├── datasets
+    │   ├── __init__.py
+    │   ├── toydata.py
+    │   ├── toyfunc.py
+    │   └── xlsdata.py
+    ├── estimations
+    │   ├── __init__.py
+    │   └── ensemble.py
+    ├── figures
+    │   ├── non-weight.png
+    │   ├── regression-uncertainty.png
+    │   ├── weighted-ru.png
+    │   └── weighted.png
+    ├── tools
+    │   └── train.py
+    ├── utils
+    │   ├── __init__.py
+    │   ├── device.py
+    │   └── logger.py
 ```
 ---
 ## Papers:
