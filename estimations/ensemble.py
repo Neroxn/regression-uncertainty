@@ -35,6 +35,15 @@ class VarianceNetwork(torch.nn.Module):
         sigma = self.sigma(x)
         return mu, sigma
 
+def denormalize(x, mean_x, std_x):
+    """
+    Denormalize the data
+    """
+    if mean_x is None or std_x is None:
+        return x
+    x = x * std_x + mean_x
+    return x
+
 def create_multiple_networks(num_networks, input_size, layer_sizes, output_size, **kwargs):
     """
     Create multiple networks with the same architecture
@@ -70,6 +79,7 @@ def train_multiple_networks(
     networks,
     optimizers,
     device,
+
     **kwargs):
     """
     Train ensamble of networks.
@@ -88,6 +98,7 @@ def train_multiple_networks(
     logger = kwargs.get('logger', None)
     weighted = kwargs.get('weighted', False)
     ds_stats = kwargs.get('ds_stats', None)
+    val_every = kwargs.get('val_every', 250)
 
     num_networks = len(networks)
     out_mu = np.zeros((batch_size, num_networks))
@@ -95,11 +106,15 @@ def train_multiple_networks(
     loss_train = np.zeros((num_networks))
     mse_train = np.zeros((num_networks))
 
+    if ds_stats is not None:
+        mean_y, std_y = ds_stats[1][0], ds_stats[1][1]
+    else:
+        mean_y, std_y = 0, 1
+
     for k in range(num_networks):
         networks[k] = networks[k].to(device)
-    for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
-        test_batch_x, test_batch_y = next(iter(val_dataloader)) # this effectively samples a random batch
 
+    for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
         for k in range(num_networks):
             # move data to device
             batch_x, batch_y = next(iter(train_dataloader)) # sample random batch
@@ -108,78 +123,63 @@ def train_multiple_networks(
 
             # get the network prediction for the training data
             mu_train, sigma_train = networks[k](batch_x)
-
             sigma_train_pos = sig_positive(sigma_train)
 
             if weighted is True:
-                weights = (1 - torch.tanh(sigma_train_pos)).detach() # we want high variance to have low weight
+                weights = (torch.sigmoid(sigma_train)).detach() # we want high variance to have high weight
                 loss = torch.mean(
                     (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)*weights
-                    ) + 5
+                    + 5) 
             else:
                 loss = torch.mean(
                     (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)
-                    ) + 5
+                    + 5) 
 
 
             if torch.isnan(loss):
                 raise ValueError('Loss is NaN')
 
+            # calculate the loss and update the weights
             optimizers[k].zero_grad()
             loss.backward()
             optimizers[k].step()
 
             loss_train[k] += loss.item()
-
             mu_train = mu_train.detach()
             sigma_train = sigma_train.detach()
-
-            if ds_stats is not None:
-                y_mu, y_sig = ds_stats[1][0], ds_stats[1][1]
-                batch_y_rescaled = batch_y*y_mu + y_sig
-                mu_train_rescaled = mu_train*y_mu + y_sig
-                mse_train[k] = torch.mean(torch.square(batch_y_rescaled - mu_train_rescaled)).detach().item()
-            else:
-                mse_train[k] = torch.mean(torch.square(batch_y - mu_train)).detach().item()
-
-            # get the network prediction for the test data
-            with torch.no_grad():
-                mu_test, sigma_test = networks[k](test_batch_x)
-                sigma_test_pos = sig_positive(sigma_test)
-                out_mu[:, k] = mu_test.detach().numpy().flatten()
-                out_sig[:, k] = sigma_test_pos.detach().numpy().flatten()
-
-
-        out_mu_final = np.mean(out_mu, axis=1)
-        out_sig_final = np.sqrt(np.mean(out_sig, axis=1) + np.mean(np.square(out_mu), axis = 1) - np.square(out_mu_final))
-        test_batch_y_rescaled = test_batch_y
-
-
-        #TODO : Handle this better!
-        if ds_stats is not None:
-            y_mu, y_sig = ds_stats[1][0], ds_stats[1][1]
-            test_batch_y_rescaled = test_batch_y*y_sig + y_mu
-            out_mu_final = np.mean(out_mu, axis=1)*y_sig + y_mu
-
+            
+            mse_train[k] += torch.mean(
+                torch.square((batch_y * std_y + mean_y) - (mu_train * std_y + mean_y))
+                ).detach().item()
 
         if logger is not None:
             logger.log_metric(
-                metric_name = f"loss",
-                metric_value = np.mean(loss_train),
-                step = num_iter)
-
-            logger.log_metric(
-                metric_name = f"mse_mu",
-                metric_value = np.mean(mse_train),
-                step = num_iter)
-
-            logger.log_metric(
-                metric_name = f"mse_final",
-                metric_value = np.mean(np.square(out_mu_final - test_batch_y_rescaled.numpy().flatten())),
-                step = num_iter)
+                metric_dict = {
+                    "loss" : np.mean(loss_train),
+                    "mse_mu" : np.mean(mse_train),
+                    "rmse_mu" : np.sqrt(np.mean(mse_train)),
+                },
+                step = num_iter
+            )
 
         loss_train = np.zeros((num_networks))
         mse_train = np.zeros((num_networks))
+
+        # calculate mse for all networks
+        if num_iter % val_every == 0:
+            val_mu, _, val_true = evaluate_multiple_networks(val_dataloader, networks, device, logger = logger)
+
+            val_mu = val_mu * std_y + mean_y
+            val_true = val_true * std_y + mean_y
+
+            if logger is not None:
+                logger.log_metric(
+                    metric_dict = {
+                        "val_mse_mean" : np.mean(np.square(val_mu - val_true)),
+                        "val_rmse_mean" : np.sqrt(np.mean(np.square(val_mu - val_true)))
+                    },
+                    step = num_iter
+                )
 
     return networks
 
@@ -195,10 +195,8 @@ def test_multiple_networks(x_sample,networks, device, **kwargs):
         np.ndarray: predicted standard deviation array
     """
     logger = kwargs.get('logger', None)
-
     num_networks = len(networks)
     
-
     x_sample_tensor = torch.from_numpy(x_sample).float().to(device)
 
     # output for ensemble network
@@ -228,3 +226,56 @@ def test_multiple_networks(x_sample,networks, device, **kwargs):
     out_sig_sample_epistemic = np.sqrt(np.mean(np.square(out_mu_sample), axis = 1) - np.square(out_mu_sample_final)) # data uncertainty
 
     return out_mu_sample_final, out_sig_sample_aleatoric + out_sig_sample_epistemic
+
+
+def evaluate_multiple_networks(val_dataloader, networks, device, **kwargs):
+    """
+    Evaluate the ensamble of networks.
+    Args:
+        val_dataloader (torch.utils.data.DataLoader): dataloader for testing
+        networks (list): list of networks
+
+    Returns:
+        np.ndarray: predicted mean array
+        np.ndarray: predicted standard deviation array
+    """
+    logger = kwargs.get('logger', None)
+    num_networks = len(networks)
+    
+    # output for ensemble network
+    out_mu  = np.zeros([len(val_dataloader.dataset), num_networks])
+    out_sig = np.zeros([len(val_dataloader.dataset), num_networks])
+
+    out_mu_single  = np.zeros([len(val_dataloader.dataset), 1])
+    out_sig_single = np.zeros([len(val_dataloader.dataset), 1])
+
+    batch_y_true = np.zeros([len(val_dataloader.dataset), 1])
+
+    batch_size = val_dataloader.batch_size
+    current_index = 0
+
+    for i, (batch_x, batch_y) in enumerate(val_dataloader):
+        batch_x = batch_x.to(device)
+        batch_y = batch_y.to(device)
+
+        batch_y_true[current_index: current_index + batch_y.shape[0],0] = np.reshape(batch_y, (batch_y.shape[0]))
+
+        for j in range(num_networks):
+            # move network to device
+            networks[j].to(device)
+            with torch.no_grad():
+                mu, sigma = networks[j](batch_x)
+                sigma_pos = sig_positive(sigma)            
+
+                out_mu[current_index:current_index + mu.shape[0],j] = np.reshape(mu , (mu.shape[0]))
+                out_sig[current_index: current_index + mu.shape[0],j] = np.reshape(sigma_pos, (mu.shape[0]))
+
+        current_index += mu.shape[0]
+
+    out_mu_final  = np.mean(out_mu, axis = 1).reshape(-1,1)
+
+    out_sig_sample_aleatoric = np.sqrt(np.mean(out_sig, axis=1)) # model uncertainty
+    out_sig_sample_epistemic = np.sqrt(np.mean(np.square(out_mu), axis = 1) - np.square(out_mu_final)) # data uncertainty
+    # VAR X = E[X^2] - E[X]^2 
+    
+    return out_mu_final, out_sig_sample_aleatoric + out_sig_sample_epistemic, batch_y_true
