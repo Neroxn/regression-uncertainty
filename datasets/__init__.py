@@ -1,9 +1,18 @@
-from .toydata import ToyDataset
-from .xlsdata import XLSDataset
+from .toy_data import *
+from .xls_data import *
+from .csv_data import *
 
+# Add to the following class as the list goes on 
 CLASS_REGISTRY = {
     "toy": ToyDataset,
     "xls": XLSDataset,
+    "csv" : CSVDataset
+}
+
+DATA_LOADER_REGISTRY = {
+    "toy" : create_toy_dataloader,
+    "xls" : create_xls_dataloader,
+    "csv" : create_csv_dataloader
 }
 
 def create_dataset(dataset_config):
@@ -14,9 +23,18 @@ def create_dataset(dataset_config):
     Returns:
         dataset (torch.utils.data.Dataset): dataset
     """
-    dataset_type = dataset_config["type"]
+    dataset_type = dataset_config["class"]
     if dataset_type not in CLASS_REGISTRY:
         raise ValueError("Unknown dataset type: {}".format(dataset_type))
-    dataset = CLASS_REGISTRY[dataset_type](dataset_config)
+    dataset = CLASS_REGISTRY[dataset_type](**dataset_config)
 
     return dataset
+
+def create_dataloader(dataset_config):
+    """
+    Create a dataloader based on the config file
+    """
+    dataset_type = dataset_config["class"]
+    if dataset_type not in DATA_LOADER_REGISTRY:
+        raise ValueError("Unknown dataset type: {}".format(dataset_type))
+    return DATA_LOADER_REGISTRY[dataset_type](**dataset_config)

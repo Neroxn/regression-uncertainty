@@ -1,17 +1,18 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-from typing import *
-import matplotlib.pyplot as plt
-from sklearn.utils import shuffle
-import pandas as pd
- 
-class XLSParser():
-    """ Load any XLS file into a numpy array."""
-    def __init__(self, xls_path) -> None:
-        self.xls_path = xls_path
-        self.data = pd.read_excel(self.xls_path)
+# CSV dataloader
 
+import torch
+from torch.utils.data import DataLoader, Dataset
+import pandas as pd
+from sklearn.utils import shuffle
+from typing import *
+import numpy as np
+
+
+class CSVParser():
+    """ Load any XLS file into a numpy array."""
+    def __init__(self, csv_path) -> None:
+        self.csv_path = csv_path
+        self.data = pd.read_csv(self.csv_path)
 
     def parse(self, x_col : list, y_col : list) -> Tuple[np.ndarray, np.ndarray]:
         """ Parse the data into x and y values. """
@@ -34,11 +35,11 @@ class XLSParser():
         return self.x, self.y
         
 
-class XLSDataset(Dataset):
+class CSVDataset(Dataset):
     def __init__(self, x, y):
         self.x = x
         self.y = y
-
+        
     def __len__(self):
         """
         Return the shape of the dataset. In this case, it is the number of data points.
@@ -52,7 +53,25 @@ class XLSDataset(Dataset):
         return torch.Tensor(self.x[idx]), torch.Tensor(self.y[idx])
 
 
-def create_xls_dataloader(batch_size, xls_path, test_ratio=0.2):
+class CSVDataset(Dataset):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        
+    def __len__(self):
+        """
+        Return the shape of the dataset. In this case, it is the number of data points.
+        """
+        return self.x.shape[0]
+
+    def __getitem__(self, idx):
+        """
+        Transform the data to torch.Tensor
+        """
+        return torch.Tensor(self.x[idx]), torch.Tensor(self.y[idx])
+
+
+def create_csv_dataloader(**kwargs):
     """
     A simple dataloader for the toy dataset.
     Args:
@@ -63,9 +82,13 @@ def create_xls_dataloader(batch_size, xls_path, test_ratio=0.2):
         train_loader (torch.utils.data.DataLoader): dataloader for training
         test_loader (torch.utils.data.DataLoader): dataloader for testing
     """
-    parser = XLSParser(xls_path)
-    x, y = parser.parse(None, None)
+    csv_path = kwargs.pop("path")
+    test_ratio = kwargs.pop("test_ratio", 0.2)
+    batch_size = kwargs.pop("batch_size", 32)
 
+    print()
+    parser = CSVParser(csv_path)
+    x,y = parser.parse(None,None)
     # create train and test data
     x, y = shuffle(x, y)
 
@@ -81,11 +104,12 @@ def create_xls_dataloader(batch_size, xls_path, test_ratio=0.2):
     test_x, test_y = x[:num_test], y[:num_test]
 
     # create dataloader
-    train_dataset = XLSDataset(train_x, train_y)
-    test_dataset = XLSDataset(test_x, test_y)
+    train_dataset = CSVDataset(train_x, train_y)
+    test_dataset = CSVDataset(test_x, test_y)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+
     return train_loader, test_loader, train_dataset, test_dataset, (x_mean, x_std), (y_mean, y_std)
 
     
