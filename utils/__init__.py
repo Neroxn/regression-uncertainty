@@ -14,6 +14,8 @@ def create_logger(logger_config):
     Returns:
         logger (NetworkLogger): logger
     """
+    if logger_config is None:
+        return None
     logger_type = logger_config.pop("type")
     if logger_type not in LOGGER_REGISTRY:
         raise ValueError("Unknown logger type: {}".format(logger_type))
