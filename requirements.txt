@@ -1,0 +1,8 @@
+clearml==1.9.1
+matplotlib==3.6.1
+numpy==1.23.1
+pandas==1.4.3
+PyYAML==6.0
+scikit_learn==1.2.1
+torch==1.14.0.dev20221013
+tqdm==4.64.1
