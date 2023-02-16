@@ -1,19 +1,16 @@
 network: # basic MLP layer configuration
   num_networks: 5
-  layer_sizes: [16,32,64]
+  layer_sizes: [50]
 dataset: # for now, just use toy-dataset
-  class: 'toy'
-  func: 'toy_function_complex'
-  bounds : [0, 4]
+  class: 'csv'
+  path: "regression_datasets/boston.csv"
   batch_size : 128   
 train:
-  num_iter : 5000
-  print_every : 250
+  num_iter : 10000
+  print_every : 2500
   weighted : False
-test:
-  batch_size : 32
 logger:
   type: 'wandb'
   project: 'uncertainty-estimation'
   entity: 'kbora'
-  name: 'Toy Dataset Complex Weighted'
+  name: 'Boston Dataset Non-Weighted'

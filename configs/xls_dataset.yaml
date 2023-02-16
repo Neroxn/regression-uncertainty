@@ -1,16 +1,14 @@
 network: # basic MLP layer configuration
   num_networks: 5
-  layer_sizes: [64,128,256]
+  layer_sizes: [50]
 dataset: # for now, just use toy-dataset
   class: 'xls'
-  xls_path: "regression_datasets/Concrete_Data.xls"
+  path: "regression_datasets/Concrete_Data.xls"
+  batch_size : 128   
 train:
-  batch_size : 32   
   num_iter : 10000
   print_every : 2500
   weighted : True
-test:
-  batch_size : 32
 logger:
   type: 'wandb'
   project: 'uncertainty-estimation'
