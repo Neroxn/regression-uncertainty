@@ -14,13 +14,13 @@ import time
 
 from utils.logger import set_logger, pretty_dict_print
 from utils.device import set_device, set_random
-
-from estimations.ensemble import create_multiple_networks, train_multiple_networks, test_multiple_networks
-
 from datasets.toy_data import *
+
 from datasets import create_dataloader
 from utils import create_logger
-
+from estimations import create_estimator
+from transforms import create_transform
+from transforms.compose import Compose
 
 def parse_config(config_path):
     """
@@ -75,79 +75,66 @@ if __name__ == '__main__':
 
     # parse config file
     config = parse_config(args.config)
-    network_config = config.get("network")
+    estimator_config = config.get("estimator")
     dataset_config = config.get("dataset")
     train_config = config.get("train")
     dataset_config = config.get("dataset")
+    transform_config = config.get("transforms", None)
     logger_config = config.get("logger",None)
-    pretty_dict_print(config)
 
-    # create dataloaders
+    ######## Create dataloader ########
     logger.info("Creating dataloaders")
-    train_loader, val_loader, train_ds, val_ds, x_stats, y_stats = create_dataloader(dataset_config)
+    train_loader, val_loader, train_ds, val_ds = create_dataloader(dataset_config)
 
-    # create ensamble of networks
-    input_size = train_ds.x.shape[1]
-    output_size = train_ds.y.shape[1]
-    num_networks = network_config["num_networks"]
-    networks, optimizers = create_multiple_networks(
-        num_networks,
-        input_size,
-        network_config["layer_sizes"],
-        output_size
-    )
-    logger.info(f"Created network : {networks[-1]}")
+    ######## Create estimator #########
+    estimator_config["model"].update({"input_size": train_ds.x.shape[1], "output_size": train_ds.y.shape[1]})
+    estimator = create_estimator(estimator_config)
+    logger.info(f"Created estimator : \n\t{estimator}")
 
-    # setup metric logger
+    ####### Create transforms #########
+    x_transforms = Compose([create_transform(transform) for transform in transform_config.get("x", [])])
+    y_transforms = Compose([create_transform(transform) for transform in transform_config.get("y", [])])
+
+    # run the whole dataset once to get stats if mean and std is not provided
+    for transform in x_transforms.transforms:
+        if transform.is_pass_required:
+            transform(np.concatenate([train_ds.x, val_ds.x], axis=0))
+    
+    for transform in y_transforms.transforms:
+        if transform.is_pass_required:
+            transform(np.concatenate([train_ds.y, val_ds.y], axis=0))
+ 
+    logger.info(f"Created transforms : \n\tx: {x_transforms}\n\ty: {y_transforms}")
+
+    ######### Create logger #########
     metric_logger = create_logger(logger_config)
 
-    # log the config file
     if metric_logger is not None:
         metric_logger.log_meta(config)
+    logger.info(f"Created logger : \n\t{metric_logger}")
 
-    logger.info(f"Created metric logger : {metric_logger}")
+    ######### Train estimator #########
+    networks = estimator.train_estimator(
+        train_config = train_config,
+        train_dl = train_loader,
+        val_dl = val_loader,
+        device = device,
+        transforms = (x_transforms, y_transforms),
+        logger = metric_logger)
 
-    
-    # train the networks
-    logger.info("Training networks")
-    networks = train_multiple_networks(
-        train_loader,
-        val_loader,
-        networks,
-        optimizers,
-        device,
-        num_iter = train_config["num_iter"],
-        print_every = train_config["print_every"],
-        weighted = train_config["weighted"],
-        logger = metric_logger,
-        ds_stats = (x_stats, y_stats) if y_stats is not None else None
-    )
-    
-if dataset_config.get("class", None) == "toy":
-    func = dataset_config.get("func", None)
-    func = TOY_FUNC_REGISTRY[func]()
-    x_sample, y_sample = sample_toy_data(func, -10, 10, 0.1)
-    data_mu, data_sig = test_multiple_networks(
-        x_sample,
-        networks,
-        device,
-    )
+    logger.info("Training finished")
 
-    plot_toy_results(
-        x_sample.reshape(-1),
-        y_sample.reshape(-1),
-        train_ds,
-        data_mu,
-        data_sig,
-        save_path=args.save_dir
-    )
-else:
-    pass 
-    # save the networks
+    ######### TODO : Train predictor using uncertainity values #########
+
+
+    ######### Save networks ##########
     logger.info(f"Saving networks to the path : {args.checkpoint}")
     if args.checkpoint is not None:
         logger.info(f"Saving networks to {args.checkpoint}")
-        if not os.path.exists(args.checkpoint):
-            os.makedirs(args.checkpoint)
+
+        checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+        if not os.path.exists(checkpoint_folder):
+            os.makedirs(checkpoint_folder)
+        
         for i, network in enumerate(networks):
-            torch.save(network.state_dict(), os.path.join(args.checkpoint,f"network_{i}.pth"))
+            torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"network_{i}.pth"))

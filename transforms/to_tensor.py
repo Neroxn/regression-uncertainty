@@ -16,7 +16,6 @@ class ToTensor(transforms.base.Transform):
         x = x.numpy()
         return x
 
-        
-
-    
+    def __str__(self) -> str:
+        return f"ToTensor(dtype={self.dtype})"
     

@@ -17,3 +17,5 @@ class Compose(transforms.base.Transform):
             x = transform.backward(x)
         return x
 
+    def __str__(self) -> str:
+        return f"Compose({', '.join([str(transform) for transform in self.transforms])})"

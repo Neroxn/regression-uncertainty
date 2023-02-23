@@ -35,8 +35,8 @@ class XLSParser():
 
 class XLSDataset(Dataset):
     def __init__(self, x, y):
-        self.x = x
-        self.y = y
+        self.x = np.array(x, dtype = np.float32)
+        self.y = np.array(y, dtype = np.float32)
         
     def __len__(self):
         """
@@ -48,7 +48,7 @@ class XLSDataset(Dataset):
         """
         Transform the data to torch.Tensor
         """
-        return torch.Tensor(self.x[idx]), torch.Tensor(self.y[idx])
+        return self.x[idx], self.y[idx]
 
 
 def create_xls_dataloader(**kwargs):
@@ -72,13 +72,6 @@ def create_xls_dataloader(**kwargs):
     # create train and test data
     x, y = shuffle(x, y)
 
-    # normalize x and y values
-    x_mean,x_std = x.mean(axis=0), x.std(axis=0)
-    y_mean,y_std = y.mean(axis=0), y.std(axis=0)
-
-    x = (x - x.mean(axis=0)) / x.std(axis=0)
-    y = (y - y.mean(axis=0)) / y.std(axis=0)
-
     num_test = int(x.shape[0] * test_ratio)
     train_x, train_y = x[num_test:], y[num_test:]
     test_x, test_y = x[:num_test], y[:num_test]
@@ -90,6 +83,6 @@ def create_xls_dataloader(**kwargs):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
-    return train_loader, test_loader, train_dataset, test_dataset, (x_mean, x_std), (y_mean, y_std)
+    return train_loader, test_loader, train_dataset, test_dataset
 
     
