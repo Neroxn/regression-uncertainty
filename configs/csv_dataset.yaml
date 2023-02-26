@@ -1,6 +1,9 @@
 network: # basic MLP layer configuration
   num_networks: 5
   layer_sizes: [50]
+optimizer:
+  class : Adam
+  lr : 0.001
 dataset: # for now, just use toy-dataset
   class: 'csv'
   path: "regression_datasets/boston.csv"
