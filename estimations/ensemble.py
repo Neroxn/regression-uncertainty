@@ -39,6 +39,19 @@ class VarianceNetwork(torch.nn.Module):
         sigma = self.sigma(x)
         return mu, sigma
 
+class MeanNetwork(torch.nn.Module):
+    def __init__(self, input_size, layer_sizes, output_size):
+        super(MeanNetwork, self).__init__()
+        self.network = BaseNetwork(input_size, layer_sizes)
+
+        # get network layers last layer
+        self.mu = torch.nn.Linear(layer_sizes[-1], output_size)
+
+    def forward(self, x):
+        x = self.network(x)
+        mu = self.mu(x)
+        return mu
+
 class EnsembleEstimator(estimations.base.UncertaintyEstimator):
     def __init__(self, network_config, optimizer_config):
         self.input_size = network_config.pop("input_size")
@@ -48,11 +61,12 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         
         self.networks = None
         self.optimizers = None
+        self.estimators = None
 
     def __str__(self) -> str:
         return f"EnsembleEstimator(network_config={self.network_config}, optimizer_config={self.optimizer_config})"
 
-    def init_estimator(self):
+    def init_estimator(self, estimator_class = VarianceNetwork):
         """
         Initialize estimator by using the network and optimizer config
         """
@@ -71,23 +85,72 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         self.networks = networks
         self.optimizers = optimizers
 
+
     def train_estimator(self, **kwargs):
         self.init_estimator()
-        return self.train_multiple_networks(**kwargs)
+        return self.train_multiple_estimator(**kwargs)
 
-    def train_multiple_networks(
+    def init_predictor(self, **kwargs):
+        self.estimators = self.networks
+        self.network_config['num_networks'] = 1 
+        self.init_estimator(estimator_class=MeanNetwork)
+
+    def train_predictor(self, **kwargs):
+        self.init_predictor()
+        return self.train_multiple_estimator(**kwargs)
+
+    def _calculate_uncertainity(self, x, weight_type = "both"):
+        """
+        Calculate weights for each data point in the batch
+        """
+        if self.estimators is None:
+            raise ValueError("Estimators not trained yet. Please train estimators first.")
+        
+        out_mu = torch.zeros((x.shape[0], len(self.estimators)))
+        out_sig = torch.zeros((x.shape[0], len(self.estimators)))
+        with torch.no_grad():
+            for i,estimator in enumerate(self.estimators):
+                mu,sigma = estimator(x)
+                out_mu[:,i] = mu.squeeze()
+                out_sig[:,i] = sig_positive(sigma.squeeze())
+
+        # calculate weights using the variance
+        out_mu_final  = torch.mean(out_mu, axis = 1).reshape(-1,1)
+        
+        out_sig_sample_aleatoric = torch.mean(out_sig, axis=1) # model uncertainty
+        out_sig_sample_epistemic = torch.mean(torch.square(out_mu), axis = 1) - torch.square(out_mu_final) # data uncertainty
+    
+        if weight_type == "both":
+            return torch.sqrt(out_sig_sample_aleatoric + out_sig_sample_epistemic)
+        elif weight_type == "aleatoric":
+            return torch.sqrt(out_sig_sample_aleatoric)
+        elif weight_type == "epistemic":
+            return torch.sqrt(out_sig_sample_epistemic)
+        else:
+            raise ValueError("Weight type not supported. Please choose from aleatoric, epistemic, both")
+
+    def _calculate_weights(self, x, weight_type = "aleatoric"):
+        uncertainity = self._calculate_uncertainity(x, weight_type = weight_type)
+        weights = torch.tanh(uncertainity)
+        return uncertainity
+
+    def train_multiple_estimator(
         self,
         train_config : dict,
         train_dl : torch.utils.data.DataLoader,
         val_dl : torch.utils.data.DataLoader,
         device : torch.device,
         transforms : Tuple[transforms.base.Transform],
-        logger : utils.logger.NetworkLogger = None) -> None:
+        logger : utils.logger.NetworkLogger,
+        logger_prefix : str = "estimator",
+        weighted_training = False) -> None:
         
         num_iters = train_config.get("num_iter", 1000)
         weighted = train_config.get("weighted", False)
         val_every = train_config.get('val_every', 250)
-        train_type = train_config.get('train_type', 'iter') # iter or epoch
+        print_every = train_config.get('print_every', 50)
+
+
 
         x_transform,y_transform = transforms
         networks = self.networks
@@ -115,9 +178,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 mu_train, sigma_train = networks[k](batch_x)
                 sigma_train_pos = sig_positive(sigma_train)
 
-
-                if weighted is True:
-                    weights = (torch.sigmoid(sigma_train)).detach() # we want high variance to have high weight
+                if weighted_training is True:
+                    weights = self._calculate_weights(batch_x)
                     loss = torch.mean(
                         (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)*weights
                         + 5) 
@@ -125,7 +187,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                     loss = torch.mean(
                         (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)
                         + 5) 
-
 
                 if torch.isnan(loss):
                     raise ValueError('Loss is NaN')
@@ -135,7 +196,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 loss.backward()
                 optimizers[k].step()
 
-                loss_train[k] += loss.item()
+                loss_train[k] += loss.to('cpu').item()
                 mu_train = mu_train.detach()
                 sigma_train = sigma_train.detach()
                 
@@ -144,17 +205,17 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
                 mse_train[k] += torch.mean(
                     torch.square(batch_y_transformed - mu_train_transformed)
-                    )
-
-            if logger is not None:
-                logger.log_metric(
-                    metric_dict = {
-                        "loss" : torch.mean(loss_train),
-                        "mse_mu" : torch.mean(mse_train),
-                        "rmse_mu" : torch.sqrt(torch.mean(mse_train)),
-                    },
-                    step = num_iter
-                )
+                    ).to('cpu')
+                
+            logger.log_metric(
+                metric_dict = {
+                    f"{logger_prefix}_loss" : torch.mean(loss_train),
+                    f"{logger_prefix}_mse_mu" : torch.mean(mse_train),
+                    f"{logger_prefix}_rmse_mu" : torch.sqrt(torch.mean(mse_train)),
+                },
+                step = num_iter,
+                print_log = num_iter % print_every == 0
+            )
 
             loss_train = torch.zeros((num_networks))
             mse_train = torch.zeros((num_networks))
@@ -162,15 +223,13 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             # calculate mse for all networks
             if num_iter % val_every == 0:
                 val_mu, _, val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device, logger = logger)
-                
-                if logger is not None:
-                    logger.log_metric(
-                        metric_dict = {
-                            "val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
-                            "val_rmse_mean" : torch.sqrt(torch.mean(np.square(val_mu - val_true)))
-                        },
-                        step = num_iter
-                    )
+                logger.log_metric(
+                    metric_dict = {
+                        f"{logger_prefix}_val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
+                        f"{logger_prefix}_val_rmse_mean" : torch.sqrt(torch.mean(np.square(val_mu - val_true)))
+                    },
+                    step = num_iter
+                )
 
         return networks
 
@@ -240,117 +299,6 @@ def sig_positive(x):
         torch.Tensor: transformed sigma output
     """
     return torch.log(1 + torch.exp(x)) + 1e-6
-
-# def train_multiple_networks(
-#     train_dataloader,
-#     val_dataloader,
-#     networks,
-#     optimizers,
-#     device,
-#     logger,
-#     ds_stats = None,
-#     **kwargs):
-#     """
-#     Train ensamble of networks.
-#     Args:
-#         train_dataloader (torch.utils.data.DataLoader): dataloader for training
-#         val_dataloader (torch.utils.data.DataLoader): dataloader for validation
-#         networks (list): list of networks
-#         optimizers (list): list of optimizers
-#         num_iter (int): number of iterations to train
-#     """
-
-#     # kwargs that controls the training
-#     num_iters = kwargs.get('num_iter', 1000)
-#     print_every = kwargs.get('print_every', 100)
-#     batch_size = kwargs.get('batch_size', 32)
-#     logger = kwargs.get('logger', None)
-#     weighted = kwargs.get('weighted', False)
-#     val_every = kwargs.get('val_every', 250)
-
-#     num_networks = len(networks)
-#     out_mu = np.zeros((batch_size, num_networks))
-#     out_sig = np.zeros((batch_size, num_networks))
-#     loss_train = np.zeros((num_networks))
-#     mse_train = np.zeros((num_networks))
-
-#     if ds_stats is not None:
-#         mean_y, std_y = ds_stats[1][0], ds_stats[1][1]
-#     else:
-#         mean_y, std_y = 0, 1
-
-#     for k in range(num_networks):
-#         networks[k] = networks[k].to(device)
-
-#     for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
-#         for k in range(num_networks):
-#             # move data to device
-#             batch_x, batch_y = next(iter(train_dataloader)) # sample random batch
-#             batch_x = batch_x.to(device)
-#             batch_y = batch_y.to(device)
-
-#             # get the network prediction for the training data
-#             mu_train, sigma_train = networks[k](batch_x)
-#             sigma_train_pos = sig_positive(sigma_train)
-
-#             if weighted is True:
-#                 weights = (torch.sigmoid(sigma_train)).detach() # we want high variance to have high weight
-#                 loss = torch.mean(
-#                     (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)*weights
-#                     + 5) 
-#             else:
-#                 loss = torch.mean(
-#                     (0.5*torch.log(sigma_train_pos) + 0.5*(torch.square(batch_y - mu_train))/sigma_train_pos)
-#                     + 5) 
-
-
-#             if torch.isnan(loss):
-#                 raise ValueError('Loss is NaN')
-
-#             # calculate the loss and update the weights
-#             optimizers[k].zero_grad()
-#             loss.backward()
-#             optimizers[k].step()
-
-#             loss_train[k] += loss.item()
-#             mu_train = mu_train.detach()
-#             sigma_train = sigma_train.detach()
-            
-
-#             mse_train[k] += torch.mean(
-#                 torch.square(transforms. - (mu_train * std_y + mean_y))
-#                 ).detach().item()
-
-#         if logger is not None:
-#             logger.log_metric(
-#                 metric_dict = {
-#                     "loss" : np.mean(loss_train),
-#                     "mse_mu" : np.mean(mse_train),
-#                     "rmse_mu" : np.sqrt(np.mean(mse_train)),
-#                 },
-#                 step = num_iter
-#             )
-
-#         loss_train = np.zeros((num_networks))
-#         mse_train = np.zeros((num_networks))
-
-#         # calculate mse for all networks
-#         if num_iter % val_every == 0:
-#             val_mu, _, val_true = evaluate_multiple_networks(val_dataloader, networks, device, logger = logger)
-
-#             val_mu = val_mu * std_y + mean_y
-#             val_true = val_true * std_y + mean_y
-
-#             if logger is not None:
-#                 logger.log_metric(
-#                     metric_dict = {
-#                         "val_mse_mean" : np.mean(np.square(val_mu - val_true)),
-#                         "val_rmse_mean" : np.sqrt(np.mean(np.square(val_mu - val_true)))
-#                     },
-#                     step = num_iter
-#                 )
-
-#     return networks
 
 def test_multiple_networks(x_sample,networks, device, **kwargs):
     """

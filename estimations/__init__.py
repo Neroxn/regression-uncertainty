@@ -1,4 +1,3 @@
-from .base import UncertaintyEstimator
 from .ensemble import EnsembleEstimator
 
 ESTIMATOR_REGISTRY = {

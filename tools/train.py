@@ -58,6 +58,10 @@ def parse_args():
         '--checkpoint',
         help='Checkpoint to load the model',
         default=None)
+    parser.add_argument(
+        '--load_from',
+        help='Load the model from a checkpoint',
+        default=None)
 
     return parser.parse_args()
 
@@ -69,9 +73,7 @@ if __name__ == '__main__':
 
     # set random seed for reproducibility
     set_random()
-    logger = set_logger()
     device = set_device(args.device)
-    logger.info(f"Using device : {device}")
 
     # parse config file
     config = parse_config(args.config)
@@ -82,59 +84,105 @@ if __name__ == '__main__':
     transform_config = config.get("transforms", None)
     logger_config = config.get("logger",None)
 
-    ######## Create dataloader ########
-    logger.info("Creating dataloaders")
-    train_loader, val_loader, train_ds, val_ds = create_dataloader(dataset_config)
-
-    ######## Create estimator #########
-    estimator_config["model"].update({"input_size": train_ds.x.shape[1], "output_size": train_ds.y.shape[1]})
-    estimator = create_estimator(estimator_config)
-    logger.info(f"Created estimator : \n\t{estimator}")
-
-    ####### Create transforms #########
-    x_transforms = Compose([create_transform(transform) for transform in transform_config.get("x", [])])
-    y_transforms = Compose([create_transform(transform) for transform in transform_config.get("y", [])])
-
-    # run the whole dataset once to get stats if mean and std is not provided
-    for transform in x_transforms.transforms:
-        if transform.is_pass_required:
-            transform(np.concatenate([train_ds.x, val_ds.x], axis=0))
-    
-    for transform in y_transforms.transforms:
-        if transform.is_pass_required:
-            transform(np.concatenate([train_ds.y, val_ds.y], axis=0))
- 
-    logger.info(f"Created transforms : \n\tx: {x_transforms}\n\ty: {y_transforms}")
-
     ######### Create logger #########
     metric_logger = create_logger(logger_config)
+    if logger_config is None:
+        logger = metric_logger.logger
+    else:
+        logger = set_logger()
+
+    pretty_dict_print(config)
 
     if metric_logger is not None:
         metric_logger.log_meta(config)
     logger.info(f"Created logger : \n\t{metric_logger}")
+    
+    logger.info(f"Using device : {device}")
+    ######## Create dataloader ########
+    dl_split_iterator = create_dataloader(dataset_config) # yields train_loader, val_loader, train_ds, val_ds
 
-    ######### Train estimator #########
-    networks = estimator.train_estimator(
-        train_config = train_config,
-        train_dl = train_loader,
-        val_dl = val_loader,
-        device = device,
-        transforms = (x_transforms, y_transforms),
-        logger = metric_logger)
+    ######### Create transforms #########
+    x_transforms = Compose([create_transform(transform) for transform in transform_config.get("x", [])])
+    y_transforms = Compose([create_transform(transform) for transform in transform_config.get("y", [])])
+
+    ######### Cross validation #########
+    cv_track_list = {}
+    for i,(train_loader, val_loader, train_ds, val_ds) in enumerate(dl_split_iterator):
+        logger.info(f"Created dataloaders for split {i}") 
+        ######## Create estimator #########
+        estimator_config["model"].update({"input_size": train_ds.x.shape[1], "output_size": train_ds.y.shape[1]})
+        estimator = create_estimator(estimator_config)
+        logger.info(f"Created estimator : \n\t{estimator}")
+
+        # run the whole dataset once to get stats if mean and std is not provided
+        for transform in x_transforms.transforms:
+            if transform.is_pass_required:
+                transform(np.concatenate([train_ds.x, val_ds.x], axis=0))
+        
+        for transform in y_transforms.transforms:
+            if transform.is_pass_required:
+                transform(np.concatenate([train_ds.y, val_ds.y], axis=0))
+    
+        logger.info(f"Created transforms : \n\tx: {x_transforms}\n\ty: {y_transforms}")
+
+        ######### Train uncertainty estimator #########
+        if args.load_from is None:
+            networks = estimator.train_estimator(
+                train_config = train_config,
+                train_dl = train_loader,
+                val_dl = val_loader,
+                device = device,
+                transforms = (x_transforms, y_transforms),
+                logger_prefix = f"estimator",
+                logger = metric_logger)
+        else:
+            estimator.init_estimator()
+            networks = estimator.networks
+
+            logger.info(f"Loading networks from {args.load_from}")
+            for i, network in enumerate(networks):
+                network.load_state_dict(torch.load(os.path.join(args.load_from, f"network_{i}.pth")))
+
+
+        ######### Train final predictor network #########
+        estimator_config["model"].update({"num_networks": 1 })
+        estimator_config.update({"weighted_training": 1})
+        estimator.train_predictor(
+            train_config = train_config,
+            train_dl = train_loader,
+            val_dl = val_loader,
+            device = device,
+            transforms = (x_transforms, y_transforms),
+            logger = metric_logger,
+            logger_prefix = f"predictor",
+            weighted_training = True
+            )
+    
+        track_list = metric_logger.reset_track_list()
+        for key, value in track_list.items():
+            if key not in cv_track_list:
+                cv_track_list[key] = []
+            cv_track_list[key].append(value[-1])
+
+
+
+    for key, value in cv_track_list.items():
+        metric_mean = np.mean(value)
+        metric_std = np.std(value)
+        logger.info( f"{key} : {metric_mean:.3f} ± {metric_std:.3f}")
 
     logger.info("Training finished")
 
-    ######### TODO : Train predictor using uncertainity values #########
 
+    # ######### Save networks ##########
+    # logger.info(f"Saving networks to the path : {args.checkpoint}")
+    # if args.checkpoint is not None:
+    #     logger.info(f"Saving networks to {args.checkpoint}")
 
-    ######### Save networks ##########
-    logger.info(f"Saving networks to the path : {args.checkpoint}")
-    if args.checkpoint is not None:
-        logger.info(f"Saving networks to {args.checkpoint}")
-
-        checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
-        if not os.path.exists(checkpoint_folder):
-            os.makedirs(checkpoint_folder)
+    #     checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+    #     if not os.path.exists(checkpoint_folder):
+    #         os.makedirs(checkpoint_folder)
         
-        for i, network in enumerate(networks):
-            torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"network_{i}.pth"))
+    #     for i, network in enumerate(networks):
+    #         torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"network_{i}.pth"))
+
