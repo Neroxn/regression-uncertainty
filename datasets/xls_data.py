@@ -7,9 +7,11 @@ from sklearn.utils import shuffle
 import pandas as pd
  
 class XLSParser():
-    """ Load any XLS file into a numpy array."""
+    """ Load any XLS OR CSV file into a numpy array."""
     def __init__(self, xls_path) -> None:
         self.xls_path = xls_path
+        if self.xls_path.endswith(".csv"):
+            self.data = pd.read_csv(self.xls_path)
         self.data = pd.read_excel(self.xls_path)
 
     def parse(self, x_col : list, y_col : list) -> Tuple[np.ndarray, np.ndarray]:
@@ -32,7 +34,6 @@ class XLSParser():
 
         return self.x, self.y
         
-
 class XLSDataset(Dataset):
     def __init__(self, x, y):
         self.x = np.array(x, dtype = np.float32)
@@ -63,26 +64,27 @@ def create_xls_dataloader(**kwargs):
         test_loader (torch.utils.data.DataLoader): dataloader for testing
     """
     xls_path = kwargs.pop("path")
-    test_ratio = kwargs.pop("test_ratio", 0.2)
     batch_size = kwargs.pop("batch_size", 32)
+    cv_split_num = kwargs.pop("cv_split_num", 1)
+    test_ratio = kwargs.pop("test_ratio", 0.2) if cv_split_num == 1 else 1./ cv_split_num
 
     parser = XLSParser(xls_path)
     x, y = parser.parse(None, None)
-
-    # create train and test data
-    x, y = shuffle(x, y)
-
     num_test = int(x.shape[0] * test_ratio)
-    train_x, train_y = x[num_test:], y[num_test:]
-    test_x, test_y = x[:num_test], y[:num_test]
 
-    # create dataloader
-    train_dataset = XLSDataset(train_x, train_y)
-    test_dataset = XLSDataset(test_x, test_y)
+    # create train and test data for cross validation
+    x, y = shuffle(x, y)
+    for i in range(cv_split_num):
+        train_x, train_y = np.concatenate((x[:num_test * (i)], x[num_test * (i+1):])), np.concatenate((y[:num_test * (i)], y[num_test * (i+1):]))
+        test_x, test_y = x[num_test * (i):num_test * (i+1)], y[num_test * (i):num_test * (i+1)]
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+        # create dataloader
+        train_dataset = XLSDataset(train_x, train_y)
+        test_dataset = XLSDataset(test_x, test_y)
 
-    return train_loader, test_loader, train_dataset, test_dataset
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+        yield train_loader, test_loader, train_dataset, test_dataset
 
     

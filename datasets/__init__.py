@@ -1,18 +1,15 @@
 from .toy_data import *
 from .xls_data import *
-from .csv_data import *
 
 # Add to the following class as the list goes on 
 CLASS_REGISTRY = {
     "toy": ToyDataset,
     "xls": XLSDataset,
-    "csv" : CSVDataset
 }
 
 DATA_LOADER_REGISTRY = {
     "toy" : create_toy_dataloader,
     "xls" : create_xls_dataloader,
-    "csv" : create_csv_dataloader
 }
 
 def create_dataset(dataset_config):
