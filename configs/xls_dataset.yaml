@@ -1,16 +1,28 @@
-network: # basic MLP layer configuration
-  num_networks: 5
-  layer_sizes: [50]
+estimator: # basic MLP layer configuration
+  class: 'ensemble'
+  model:
+    num_networks : 5
+    layer_sizes : [50]
+  optimizer:
+    class : 'Adam'
+    lr : 0.01
 dataset: # for now, just use toy-dataset
   class: 'xls'
   path: "regression_datasets/Concrete_Data.xls"
   batch_size : 128   
+  cv_split_num: 5
+transforms:
+  x :
+    - class : standardize
+  y :
+    - class : standardize
 train:
-  num_iter : 10000
-  print_every : 2500
+  num_iter : 251
+  print_every : 1000
+  val_every: 250
   weighted : True
-logger:
-  type: 'wandb'
-  project: 'uncertainty-estimation'
-  entity: 'kbora'
-  name: 'Concrete Dataset Weighted'
+# logger:
+#   type: 'clearml'
+#   project_name: 'uncertainty-estimation'
+#   task_name: 'Concrete Dataset Uncertainty Weighted'
+#   auto_connect_frameworks: False
