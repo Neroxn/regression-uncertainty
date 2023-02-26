@@ -5,7 +5,7 @@ import torch
 import transforms.base 
 
 class ToTensor(transforms.base.Transform):
-    def __init__(self, dtype = torch.float32):
+    def __init__(self, dtype = torch.float32, **kwargs):
         self.dtype = dtype
 
     def forward(self, x : np.ndarray) -> torch.Tensor:

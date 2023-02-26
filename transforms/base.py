@@ -2,7 +2,6 @@
 class Transform(object):
     def __init__(self, **kwargs):
         self.is_pass_required = False
-        raise NotImplementedError
 
     def forward(self, x, **kwargs):
         return x

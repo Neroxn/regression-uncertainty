@@ -8,11 +8,12 @@ TRANSFORM_REGISTRY = {
     'minmax': MinMaxNormalize,
     'standardize': Standardize,
     'totensor': ToTensor,
+    None: Transform
 }
 
 def create_transform(cfg):
     """Build transforms from config"""
-    transform_class = cfg.pop("class")
+    transform_class = cfg.get("class", None)
     if transform_class not in TRANSFORM_REGISTRY:
         raise ValueError(f"Unknown transform : {transform_class}")
     transform = TRANSFORM_REGISTRY[transform_class]

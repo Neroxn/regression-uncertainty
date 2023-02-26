@@ -4,7 +4,7 @@ import transforms.base
 from typing import Tuple, List
 
 class Compose(transforms.base.Transform):
-    def __init__(self, transforms : List[transforms.base.Transform]):
+    def __init__(self, transforms : List[transforms.base.Transform], **kwargs):
         self.transforms = transforms
 
     def forward(self, x):
