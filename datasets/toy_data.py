@@ -34,6 +34,7 @@ def toy_function_complex():
     def complex(x):
         return  np.exp(np.cos(3*x**2 + 4*x)) + np.sin(x**3) + np.sin(x) - 2*np.cos(x/2) + 4*np.sin(x/4) - 8*np.sin(np.sin(x/8) + np.sin(x/16)) + np.exp(np.sin(x/32))
     return ToyFunc(complex, repr_str = "x^2 - 3x + sin(x^3) + sin(x) - 2cos(x/2) + 4sin(x/4) - 8sin(sin(x/8) + sin(x/16)) + exp(sin(x/32))")
+
 TOY_FUNC_REGISTRY = {
     "toy_function_sin": toy_function_sin,
     "toy_function_cos": toy_function_cos,
@@ -43,28 +44,8 @@ TOY_FUNC_REGISTRY = {
 
 class ToyDataset(Dataset):
     def __init__(self, x, y):
-        self.x = x
-        self.y = y
-
-    def normalize(self):
-        """
-        Normalize the data
-        """
-        self.mean_x = np.mean(self.x, axis=0)
-        self.std_x = np.std(self.x, axis=0)
-        self.mean_y = np.mean(self.y, axis=0)
-        self.std_y = np.std(self.y, axis=0)
-
-        self.x = (self.x - np.mean(self.x, axis=0)) / np.std(self.x, axis=0)
-        self.y = (self.y - np.mean(self.y, axis=0)) / np.std(self.y, axis=0)
-
-    def denormalize(self, x, y):
-        """
-        Denormalize the data
-        """
-        x = x * self.std_x + self.mean_x
-        y = y * self.std_y + self.mean_y
-        return x, y
+        self.x = np.array(x)
+        self.y = np.array(y)  
 
     def __len__(self):
         """
@@ -76,7 +57,7 @@ class ToyDataset(Dataset):
         """
         Transform the data to torch.Tensor
         """
-        return torch.Tensor(self.x[idx]), torch.Tensor(self.y[idx])
+        return self.x[idx], self.y[idx]
 
 def make_toy_dataset(
     func : Callable, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -137,7 +118,7 @@ def create_toy_dataloader(**kwargs):
     test_dataset = ToyDataset(test_x, test_y)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
-    return train_loader, test_loader, train_dataset, test_dataset, None, None
+    return train_loader, test_loader, train_dataset, test_dataset
 
 
 def sample_toy_data(func : Callable, start : float, end : float, step : float):
