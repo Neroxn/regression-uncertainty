@@ -56,8 +56,10 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
     def __init__(self, network_config, optimizer_config):
         self.input_size = network_config.pop("input_size")
         self.output_size = network_config.pop("output_size")
-        self.optimizer_config = optimizer_config
-        self.network_config = network_config
+        self.num_networks = network_config.get("num_networks", 5)
+
+        self.optimizer_config = optimizer_config.copy()
+        self.network_config = network_config.copy()
         
         self.networks = None
         self.optimizers = None
@@ -74,7 +76,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         optimizers = []
 
         # set network default values
-        num_networks = self.network_config.get("num_networks", 5)
+        num_networks = self.num_networks
         layer_sizes = self.network_config.get("layer_sizes", [16, 32])
 
         optimizer = self.optimizer_config.pop("class", "Adam") # map to optimizers later
@@ -85,6 +87,25 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         self.networks = networks
         self.optimizers = optimizers
 
+    def init_predictor(self, predictor_class = MeanNetwork):
+        """
+        Initialize predictor by using the network and optimizer config
+        """
+        networks = []
+        optimizers = []
+
+        # set network default values
+        num_networks = 1
+        layer_sizes = self.network_config.get("layer_sizes", [16, 32])
+
+        optimizer = self.optimizer_config.pop("class", "Adam") # map to optimizers later
+        for i in range(num_networks):
+            networks.append(VarianceNetwork(self.input_size, layer_sizes, self.output_size))
+            optimizers.append(torch.optim.Adam(networks[i].parameters(), **self.optimizer_config))
+        
+        self.networks = networks
+        self.optimizers = optimizers
+        
 
     def train_estimator(self, **kwargs):
         self.init_estimator()
@@ -92,7 +113,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
     def init_predictor(self, **kwargs):
         self.estimators = self.networks
-        self.network_config['num_networks'] = 1 
         self.init_estimator(estimator_class=MeanNetwork)
 
     def train_predictor(self, **kwargs):
@@ -146,11 +166,14 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         weighted_training = False) -> None:
         
         num_iters = train_config.get("num_iter", 1000)
-        weighted = train_config.get("weighted", False)
         val_every = train_config.get('val_every', 250)
         print_every = train_config.get('print_every', 50)
+        train_type = train_config.get('train_type', 'iter')
 
-
+        if train_type == "epoch":
+            num_iters = num_iters * len(train_dl)
+            val_every = val_every * len(train_dl)
+            print_every = print_every * len(train_dl)
 
         x_transform,y_transform = transforms
         networks = self.networks
@@ -163,12 +186,26 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         for k in range(num_networks):
             networks[k] = networks[k].to(device)
 
+        # for epoch based training, create iterator per network
+        if train_type == 'epoch':
+            train_iters = []
+            for k in range(num_networks):
+                train_iters.append(iter(train_dl))
+
         for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
             for k in range(num_networks):
                 # move data to device
-                batch_x, batch_y = next(iter(train_dl)) # sample random batch
-
-                # apply transforms
+                if train_type == 'iter':
+                    batch_x, batch_y = next(iter(train_dl))
+                elif train_type == 'epoch':
+                    try:
+                        batch_x, batch_y = next(train_iters[k]) # sample random batch
+                    except StopIteration:
+                        train_iters[k] = iter(train_dl)
+                        batch_x, batch_y = next(train_iters[k])
+                else:
+                    raise ValueError("Train type not supported. Please choose from iter, epoch")
+                
                 batch_x, batch_y = x_transform.forward(batch_x), y_transform.forward(batch_y)
 
                 batch_x = batch_x.to(device)
@@ -213,24 +250,23 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                     f"{logger_prefix}_mse_mu" : torch.mean(mse_train),
                     f"{logger_prefix}_rmse_mu" : torch.sqrt(torch.mean(mse_train)),
                 },
-                step = num_iter,
-                print_log = num_iter % print_every == 0
+                step = (num_iter + 1),
+                print_log = (num_iter + 1) % print_every == 0
             )
 
-            loss_train = torch.zeros((num_networks))
-            mse_train = torch.zeros((num_networks))
-
-            # calculate mse for all networks
-            if num_iter % val_every == 0:
+            if (num_iter + 1) % val_every == 0:
                 val_mu, _, val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device, logger = logger)
                 logger.log_metric(
                     metric_dict = {
                         f"{logger_prefix}_val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
                         f"{logger_prefix}_val_rmse_mean" : torch.sqrt(torch.mean(np.square(val_mu - val_true)))
                     },
-                    step = num_iter
-                )
-
+                    step = (num_iter + 1),
+                )   
+            
+            loss_train = torch.zeros((num_networks))
+            mse_train = torch.zeros((num_networks))
+ 
         return networks
 
     def evaluate_multiple_networks(self, val_dataloader, networks, transforms, device, **kwargs):

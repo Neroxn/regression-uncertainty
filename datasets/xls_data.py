@@ -12,18 +12,22 @@ class XLSParser():
         self.xls_path = xls_path
         if self.xls_path.endswith(".csv"):
             self.data = pd.read_csv(self.xls_path)
-        self.data = pd.read_excel(self.xls_path)
+        else:
+            self.data = pd.read_excel(self.xls_path)
 
     def parse(self, x_col : list, y_col : list) -> Tuple[np.ndarray, np.ndarray]:
         """ Parse the data into x and y values. """
-        if x_col is None:
+        if x_col is None and y_col is None:
             self.x = self.data.iloc[:, :-1].values
+            self.y = self.data.iloc[:, -1].values
+        elif x_col is None:
+            self.y = self.data.iloc[:, y_col].values
+            self.x = self.data.drop(self.data.columns[y_col], axis=1).values
+        elif y_col is None:
+            self.x = self.data.iloc[:, x_col].values
+            self.y = self.data.drop(self.data.columns[x_col], axis=1).values
         else:
             self.x = self.data.iloc[:, x_col].values
-        
-        if y_col is None:
-            self.y = self.data.iloc[:, -1].values
-        else:
             self.y = self.data.iloc[:, y_col].values
 
         # assure that the data is in the right shape
@@ -66,17 +70,21 @@ def create_xls_dataloader(**kwargs):
     xls_path = kwargs.pop("path")
     batch_size = kwargs.pop("batch_size", 32)
     cv_split_num = kwargs.pop("cv_split_num", 1)
-    test_ratio = kwargs.pop("test_ratio", 0.2) if cv_split_num == 1 else 1./ cv_split_num
+    test_ratio = kwargs.pop("test_ratio", 0.2)
 
     parser = XLSParser(xls_path)
-    x, y = parser.parse(None, None)
+
+    x_col = kwargs.pop("x_col", None)
+    y_col = kwargs.pop("y_col", None)
+
+    x, y = parser.parse(x_col, y_col)
     num_test = int(x.shape[0] * test_ratio)
 
     # create train and test data for cross validation
-    x, y = shuffle(x, y)
     for i in range(cv_split_num):
-        train_x, train_y = np.concatenate((x[:num_test * (i)], x[num_test * (i+1):])), np.concatenate((y[:num_test * (i)], y[num_test * (i+1):]))
-        test_x, test_y = x[num_test * (i):num_test * (i+1)], y[num_test * (i):num_test * (i+1)]
+        x, y = shuffle(x, y)
+        test_x,test_y = x[:num_test], y[:num_test]
+        train_x, train_y = x[num_test:], y[num_test:]
 
         # create dataloader
         train_dataset = XLSDataset(train_x, train_y)
