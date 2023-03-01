@@ -74,7 +74,7 @@ if __name__ == '__main__':
     # set random seed for reproducibility
     set_random()
     device = set_device(args.device)
-
+  
     # parse config file
     config = parse_config(args.config)
     estimator_config = config.get("estimator")
@@ -96,8 +96,8 @@ if __name__ == '__main__':
     if metric_logger is not None:
         metric_logger.log_meta(config)
     logger.info(f"Created logger : \n\t{metric_logger}")
-    
     logger.info(f"Using device : {device}")
+    
     ######## Create dataloader ########
     dl_split_iterator = create_dataloader(dataset_config) # yields train_loader, val_loader, train_ds, val_ds
 
@@ -108,7 +108,8 @@ if __name__ == '__main__':
     ######### Cross validation #########
     cv_track_list = {}
     for i,(train_loader, val_loader, train_ds, val_ds) in enumerate(dl_split_iterator):
-        logger.info(f"Created dataloaders for split {i}") 
+        logger.info(f"Created dataloaders with shape train : {train_ds.x.shape},{train_ds.y.shape} and {val_ds.x.shape},{val_ds.y.shape}") 
+        
         ######## Create estimator #########
         estimator_config["model"].update({"input_size": train_ds.x.shape[1], "output_size": train_ds.y.shape[1]})
         estimator = create_estimator(estimator_config)
@@ -145,8 +146,6 @@ if __name__ == '__main__':
 
 
         ######### Train final predictor network #########
-        estimator_config["model"].update({"num_networks": 1 })
-        estimator_config.update({"weighted_training": 1})
         estimator.train_predictor(
             train_config = train_config,
             train_dl = train_loader,
@@ -163,8 +162,6 @@ if __name__ == '__main__':
             if key not in cv_track_list:
                 cv_track_list[key] = []
             cv_track_list[key].append(value[-1])
-
-
 
     for key, value in cv_track_list.items():
         metric_mean = np.mean(value)
