@@ -6,25 +6,44 @@ is being used.
 
 
 ```yaml
-network: # basic MLP layer configuration
-  num_networks: 5
-  layer_sizes: [64,128,256]
-dataset: # for now, just use toy-dataset
+estimator: # basic MLP layer configuration
+  class: 'ensemble'
+  num_networks : 5
+  network:
+    estimator_network:
+      - fc1 : {class : Linear, in_features : 8, out_features : 50}
+      - projection : {class : LinearVarianceNetworkHead, in_features : 50, out_features : 1}
+    predictor_network: 
+      - fc1 : {class : Linear, in_features : 8, out_features : 50}
+      - projection : {class : Linear, in_features : 50, out_features : 1}
+  optimizer:
+    class : 'QHAdam'
+    lr : 0.01
+dataset:
   class: 'xls'
-  xls_path: "Concrete_Data.xls"
+  path: "regression_datasets/Concrete_Data.xls"
+  batch_size : 512  
+  cv_split_num: 10
+  test_ratio: 0.10
+transforms:
+  x :
+    - {class : Standardize}
+  y :
+    - {class : Standardize}
 train:
-  batch_size : 32   
-  num_iter : 10000
-  print_every : 2500
-test:
-  batch_size : 32
+  train_type : epoch
+  num_iter : 40
+  weight_type : both
 logger:
   type: 'wandb'
   project: 'uncertainty-estimation'
   entity: 'kbora'
+  name: 'Toy Dataset Complex Weighted'
 ```
 > Example config file for Concrete dataset. 
-> 
+
+Similar to `mmdetection`, we allow anyone to define & use their own classes in any of the blocks. Simply, define your own class under the folder that your object belongs to and add corresponding class to the `*REGISTRY` dictionaries defined under each sub-modules `init.py` file.
+
 ## 2. File Structure
 ```
 .
