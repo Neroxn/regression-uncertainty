@@ -28,11 +28,12 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         optimizers = []
 
         num_networks = self.num_networks
-        _ = self.optimizer_config.pop("class", None)
         for i in range(num_networks):
             estimator = self._build_network(self.network_config.copy(), network_name)
+            optimizer = self._build_optimizer(self.optimizer_config, estimator.parameters())
+
             networks.append(estimator)
-            optimizers.append(torch.optim.Adam(networks[i].parameters(), **self.optimizer_config))
+            optimizers.append(optimizer)
         
         self.estimators = networks
         self.estimators_optimizer = optimizers
@@ -41,9 +42,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         """
         Initialize predictor by using the network and optimizer config
         """
-        _ = self.optimizer_config.pop("class", None)
         self.predictor = self._build_network(self.network_config, network_name)
-        self.predictor_optimizer = torch.optim.Adam(self.predictor.parameters(), **self.optimizer_config)
+        self.predictor_optimizer = self._build_optimizer(self.optimizer_config, self.predictor.parameters())
         
 
     def train_estimator(self, **kwargs):
