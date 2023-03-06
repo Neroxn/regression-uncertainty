@@ -6,6 +6,7 @@ import transforms.base
 
 class MinMaxNormalize(transforms.base.Transform):
     def __init__(self, x_min : torch.Tensor = None, x_max : torch.Tensor = None, **kwargs):
+        super(MinMaxNormalize, self).__init__()
         self.is_pass_required = True if x_min is None and x_max is None else False
 
         if isinstance(x_min, np.ndarray):
@@ -53,6 +54,7 @@ class MinMaxNormalize(transforms.base.Transform):
 
 class Standardize(transforms.base.Transform):
     def __init__(self, x_mean : torch.Tensor = None, x_std : torch.Tensor = None, **kwargs):
+        super(Standardize, self).__init__()
         self.is_pass_required = True if x_mean is None and x_std is None else False
 
         if isinstance(x_mean, np.ndarray):

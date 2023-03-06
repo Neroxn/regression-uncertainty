@@ -9,9 +9,9 @@ from copy import deepcopy
 
 # transform registry
 TRANSFORM_REGISTRY = {
-    'minmax': MinMaxNormalize,
-    'standardize': Standardize,
-    'totensor': ToTensor,
+    'MinMaxNormalize': MinMaxNormalize,
+    'Standardize': Standardize,
+    'ToTensor': ToTensor,
     None: Transform
 }
 

@@ -2,6 +2,7 @@
 import torch
 class Transform(torch.nn.Module): # Transforms are simple layers with no parameters. Allow pytorch models to be used as transforms.
     def __init__(self, **kwargs):
+        super(Transform, self).__init__()
         self.is_pass_required = False
 
     def forward(self, x, **kwargs):
@@ -18,12 +19,12 @@ class Transform(torch.nn.Module): # Transforms are simple layers with no parame
     
 class PytorchWrapper(Transform):
     """ A simple wrapper for pytorch models."""
-    def __init__(self, transform):
-        super().__init__()
+    def __init__(self, transform, **kwargs):
+        super(PytorchWrapper, self).__init__()
         self.transform = transform
 
     def forward(self, x, **kwargs):
-        return self.transform(x)
+        return self.transform(x, **kwargs)
     
     def backward(self, x, **kwargs):
         return x
