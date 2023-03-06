@@ -45,7 +45,9 @@ TOY_FUNC_REGISTRY = {
 class ToyDataset(Dataset):
     def __init__(self, x, y):
         self.x = np.array(x)
-        self.y = np.array(y)  
+        self.y = None
+        if y is not None:
+            self.y = np.array(y)  
 
     def __len__(self):
         """
@@ -57,44 +59,46 @@ class ToyDataset(Dataset):
         """
         Transform the data to torch.Tensor
         """
-        return self.x[idx], self.y[idx]
+        if self.y is not None:
+            return self.x[idx], self.y[idx]
+        else:
+            return self.x[idx]
 
 def make_toy_dataset(
     func : Callable, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
-    data_range = kwargs.get("data_range", 7)
     data_step = kwargs.get("data_step", 0.001)
-    bounds = kwargs.get("bounds", (-2, 2))
-    sigmas = kwargs.get("sigmas", (0.1, 0.5))
-    test_ratio = kwargs.get("test_ratio", 0.2)
+    bounds = kwargs.get("bounds")
+    sigmas = kwargs.get("sigmas")
+    imbalance_ratios = kwargs.get("imbalance_ratios")
 
-    bound1, bound2 = bounds
-    data_sigma1, data_sigma2 = sigmas
+    assert len(bounds) - 1 == len(sigmas)
+    assert len(bounds) - 1 == len(imbalance_ratios)
 
-    data_x1 = np.arange(-data_range, bound1 + data_step, data_step)
-    data_x2 = np.arange(bound2, data_range + data_step, data_step)
 
-    data_x = np.concatenate((data_x1, data_x2))
-    data_x = np.reshape(data_x, [data_x.shape[0], 1])
+    x,y = [], []
+    for i in range(len(sigmas)):
+        bound = bounds[i]
+        next_bound = bounds[i+1]
+        sigma = sigmas[i]
 
-    data_y = np.zeros([data_x.shape[0], 1])
+        data_x = np.arange(bound, next_bound + data_step, data_step)
+        data_y = func(data_x) + np.random.normal(0, sigma, data_x.shape)
 
-    for i in range(data_x.shape[0]):
-        if (data_x[i,0] < bound1): 
-            data_y[i, 0] = func(data_x[i,0]) + np.random.normal(0, data_sigma1)
-        else:
-            data_y[i, 0] = func(data_x[i,0]) + np.random.normal(0, data_sigma2)
+        imbalance_ratio = imbalance_ratios[i]
+        data_x, data_y = shuffle(data_x, data_y)
+        
+        num_to_drop = int(data_x.shape[0] * imbalance_ratio)
 
-    data_x, data_y = shuffle(data_x, data_y)
-            
-    num_train_data = int(data_x.shape[0] * (1 - test_ratio))
+        data_x = data_x[num_to_drop:] # we randomly dropped points
+        data_y = data_y[num_to_drop:]
 
-    train_x = data_x[:num_train_data, :]
-    train_y = data_y[:num_train_data, :]
-    test_x  = data_x[num_train_data:, :]
-    test_y  = data_y[num_train_data:, :]
+        x.extend(data_x)
+        y.extend(data_y)
 
-    return train_x, train_y, test_x, test_y
+    x = np.array(x, dtype=np.float32).reshape(-1,1)
+    y = np.array(y, dtype=np.float32).reshape(-1,1)
+    return x, y
 
 def create_toy_dataloader(**kwargs):
     """
@@ -112,13 +116,35 @@ def create_toy_dataloader(**kwargs):
         raise ValueError("Please provide a function to sample from.")
     func = TOY_FUNC_REGISTRY[func]()
 
+    cv_split_num = kwargs.pop("cv_split_num", 1)
     batch_size = kwargs.pop("batch_size", 32)
-    train_x, train_y, test_x, test_y = make_toy_dataset(func = func, **kwargs)
-    train_dataset = ToyDataset(train_x, train_y)
-    test_dataset = ToyDataset(test_x, test_y)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
-    return train_loader, test_loader, train_dataset, test_dataset
+    test_ratio = kwargs.pop("test_ratio", 0.2)
+    x,y = make_toy_dataset(func = func, **kwargs)
+
+    if batch_size == -1:
+        batch_size = x.shape[0]
+        
+    num_train_data = int(x.shape[0] * (1 - test_ratio))
+
+    for i in range(cv_split_num):
+        data_x, data_y = shuffle(x, y)
+        train_x = data_x[:num_train_data, :]
+        train_y = data_y[:num_train_data, :]
+        test_x  = data_x[num_train_data:, :]
+        test_y  = data_y[num_train_data:, :]
+        
+        plt.figure()
+        plt.scatter(train_x, train_y, s=1, c="b")
+        plt.scatter(test_x, test_y, s=1, c="r")
+        plt.title("Toy Data")
+        plt.savefig("figures/toy_data.png")
+
+        train_dataset = ToyDataset(train_x, train_y)
+        val_dataset = ToyDataset(test_x, test_y)
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+        yield train_loader, val_loader, train_dataset, val_dataset
 
 
 def sample_toy_data(func : Callable, start : float, end : float, step : float):

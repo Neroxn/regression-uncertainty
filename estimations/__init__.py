@@ -10,7 +10,7 @@ def create_estimator(cfg, **kwargs):
     if estimator_name not in ESTIMATOR_REGISTRY:
         raise ValueError(f"Unknown estimator : {estimator_name}")
     estimator = ESTIMATOR_REGISTRY[estimator_name](
-        network_config=cfg.get("model"),
+        network_config=cfg.get("network"),
         optimizer_config = cfg.get("optimizer"),
         **kwargs)
     return estimator

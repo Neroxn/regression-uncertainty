@@ -20,6 +20,7 @@ from datasets import create_dataloader
 from utils import create_logger
 from estimations import create_estimator
 from transforms import create_transform
+from models import create_model
 from transforms.compose import Compose
 
 def parse_config(config_path):
@@ -62,20 +63,19 @@ def parse_args():
         '--load_from',
         help='Load the model from a checkpoint',
         default=None)
+    parser.add_argument(
+        '--weighted_training',
+        help='Use weighted training',
+        action='store_true',
+        default=False)
 
     return parser.parse_args()
 
 
 if __name__ == '__main__':
-
-    # get args 
+    ######### Parse config and set random #########
     args = parse_args()
-
-    # set random seed for reproducibility
-    set_random()
     device = set_device(args.device)
-  
-    # parse config file
     config = parse_config(args.config)
     estimator_config = config.get("estimator")
     dataset_config = config.get("dataset")
@@ -83,7 +83,8 @@ if __name__ == '__main__':
     dataset_config = config.get("dataset")
     transform_config = config.get("transforms", None)
     logger_config = config.get("logger",None)
-
+    set_random()
+    
     ######### Create logger #########
     metric_logger = create_logger(logger_config)
     if logger_config is None:
@@ -98,24 +99,22 @@ if __name__ == '__main__':
     logger.info(f"Created logger : \n\t{metric_logger}")
     logger.info(f"Using device : {device}")
     
-    ######## Create dataloader ########
+    ######## Create Dataloader ########
     dl_split_iterator = create_dataloader(dataset_config) # yields train_loader, val_loader, train_ds, val_ds
 
-    ######### Create transforms #########
+    ######### Create Transforms #########
     x_transforms = Compose([create_transform(transform) for transform in transform_config.get("x", [])])
     y_transforms = Compose([create_transform(transform) for transform in transform_config.get("y", [])])
 
-    ######### Cross validation #########
+    ######### Start Cross-Validation #########
     cv_track_list = {}
     for i,(train_loader, val_loader, train_ds, val_ds) in enumerate(dl_split_iterator):
         logger.info(f"Created dataloaders with shape train : {train_ds.x.shape},{train_ds.y.shape} and {val_ds.x.shape},{val_ds.y.shape}") 
         
         ######## Create estimator #########
-        estimator_config["model"].update({"input_size": train_ds.x.shape[1], "output_size": train_ds.y.shape[1]})
         estimator = create_estimator(estimator_config)
         logger.info(f"Created estimator : \n\t{estimator}")
 
-        # run the whole dataset once to get stats if mean and std is not provided
         for transform in x_transforms.transforms:
             if transform.is_pass_required:
                 transform(np.concatenate([train_ds.x, val_ds.x], axis=0))
@@ -144,9 +143,9 @@ if __name__ == '__main__':
             for i, network in enumerate(networks):
                 network.load_state_dict(torch.load(os.path.join(args.load_from, f"network_{i}.pth")))
 
-
-        ######### Train final predictor network #########
+        ######## Train final predictor network #########
         estimator.train_predictor(
+            weighted_training=args.weighted_training,
             train_config = train_config,
             train_dl = train_loader,
             val_dl = val_loader,
@@ -154,9 +153,8 @@ if __name__ == '__main__':
             transforms = (x_transforms, y_transforms),
             logger = metric_logger,
             logger_prefix = f"predictor",
-            weighted_training = True
             )
-    
+        
         track_list = metric_logger.reset_track_list()
         for key, value in track_list.items():
             if key not in cv_track_list:
@@ -169,7 +167,6 @@ if __name__ == '__main__':
         logger.info( f"{key} : {metric_mean:.3f} ± {metric_std:.3f}")
 
     logger.info("Training finished")
-
 
     # ######### Save networks ##########
     # logger.info(f"Saving networks to the path : {args.checkpoint}")

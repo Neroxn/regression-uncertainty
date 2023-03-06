@@ -1,30 +1,41 @@
+# Estimator configurations
 estimator: # basic MLP layer configuration
   class: 'ensemble'
-  model:
-    num_networks : 5
-    layer_sizes : [100]
+  num_networks : 5
+  network:
+    estimator_network:
+      - fc1 : {class : Linear, in_features : 13, out_features : 32}
+      - fc2 : {class : Linear, in_features : 32, out_features : 64}
+      - projection : {class : LinearVarianceNetworkHead, in_features : 64, out_features : 1}
+    predictor_network: 
+      - fc1 : {class : Linear, in_features : 13, out_features : 32}
+      - fc2 : {class : Linear, in_features : 32, out_features : 64}
+      - projection : {class : Linear, in_features : 64, out_features : 1}
   optimizer:
     class : 'Adam'
     lr : 0.01
-dataset: # for now, just use toy-dataset
+
+# Dataset configurations
+dataset:
   class: 'xls'
-  path: "regression_datasets/year_prediction.csv"
-  batch_size : 128   
-  cv_split_num: 1
+  path: "regression_datasets/boston.csv"
+  batch_size : 512  
+  cv_split_num: 10
   test_ratio: 0.10
-  y_col : [0]
 transforms:
   x :
-    - class : standardize
+    - {class : standardize}
   y :
-    - class : standardize
+    - {class : standardize}
+
+# Training configurations
 train:
   train_type : epoch
   num_iter : 40
-  print_every : 5 
-  val_every: 10
-logger:
-  type: 'wandb'
-  project: 'uncertainty-estimation'
-  entity: 'kbora'
-  name: 'Toy Dataset Complex Weighted'
+
+# Logger configurations
+# logger:
+#   type: 'wandb'
+#   project: 'uncertainty-estimation'
+#   entity: 'kbora'
+#   name: 'Toy Dataset Complex Weighted'

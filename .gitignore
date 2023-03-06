@@ -6,3 +6,4 @@ wandb
 *.ipynb
 *.DS_Store
 *.pth
+regression_datasets/*

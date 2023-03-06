@@ -80,6 +80,9 @@ def create_xls_dataloader(**kwargs):
     x, y = parser.parse(x_col, y_col)
     num_test = int(x.shape[0] * test_ratio)
 
+    if batch_size == -1:
+        batch_size = x.shape[0]
+        
     # create train and test data for cross validation
     for i in range(cv_split_num):
         x, y = shuffle(x, y)
