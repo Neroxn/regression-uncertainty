@@ -7,52 +7,6 @@ import transforms.base
 from typing import Tuple
 
 torch.autograd.set_detect_anomaly(True)
-
-class BaseNetwork(torch.nn.Module):
-    def __init__(self, input_size, layer_sizes = [16, 32]):
-        super(BaseNetwork, self).__init__()
-
-        # hidden layers
-        self.real_layer_sizes = [input_size] + layer_sizes
-
-        for i in range(len(self.real_layer_sizes) - 1):
-            setattr(self, 'fc%d' % (i + 1), torch.nn.Linear(self.real_layer_sizes[i], self.real_layer_sizes[i + 1]))
-
-    def forward(self, x):
-        for i in range(len(self.real_layer_sizes) - 1):
-            x = getattr(self, 'fc%d' % (i + 1))(x)
-            x = torch.nn.functional.relu(x)
-        return x
-
-class VarianceNetwork(torch.nn.Module):
-    def __init__(self, input_size, layer_sizes, output_size):
-        super(VarianceNetwork, self).__init__()
-        self.network = BaseNetwork(input_size, layer_sizes)
-
-        # get network layers last layer
-        self.mu = torch.nn.Linear(layer_sizes[-1], output_size)
-        self.sigma = torch.nn.Linear(layer_sizes[-1], output_size)
-
-
-    def forward(self, x):
-        x = self.network(x)
-        mu = self.mu(x)
-        sigma = torch.log(1 + torch.exp(self.sigma(x))) + 1e-6
-        return mu, sigma
-
-class MeanNetwork(torch.nn.Module):
-    def __init__(self, input_size, layer_sizes, output_size):
-        super(MeanNetwork, self).__init__()
-        self.network = BaseNetwork(input_size, layer_sizes)
-
-        # get network layers last layer
-        self.mu = torch.nn.Linear(layer_sizes[-1], output_size)
-
-    def forward(self, x):
-        x = self.network(x)
-        mu = self.mu(x)
-        return mu
-
 class EnsembleEstimator(estimations.base.UncertaintyEstimator):
     def __init__(self, network_config, optimizer_config):
         self.num_networks = network_config.get("num_networks", 5)
@@ -100,7 +54,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         self.init_predictor(network_name = "predictor_network")
         return self.train_single_predictor(weighted_training=weighted_training, **kwargs)
 
-    def _calculate_probabilities(self, x, y, weight_type = "both"):
+    def _calculate_uncertainity(self, x, y, weight_type = "both"):
         """
         Calculate weights for each data point in the batch
         """
@@ -133,20 +87,10 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         else:
             raise ValueError("Weight type not supported. Please choose from aleatoric, epistemic, both")
         
-  
-        out_sig_pred = out_sig_pred.reshape(-1,1)
-
-        # approximate the probability of y given gaussian distribution mean = out_mu and std = out_sig_pred
-        p = torch.exp(-torch.square(y - out_mu_final)/(2*torch.square(out_sig_pred)))
-        return p
+        return out_sig_pred
 
     def _calculate_weights(self, x, y, weight_type = "aleatoric"):
-        p = self._calculate_probabilities(x, y, weight_type = weight_type)
-        if torch.any(p > 1):
-            raise ValueError("Probability greater than 1. Something is wrong.")
-        elif torch.any(p < 0):
-            raise ValueError("Probability less than 0. Something is wrong.")
-        weights = -torch.log(p + 1e-6) 
+        weights = self._calculate_uncertainity(x, y, weight_type = weight_type)
         return weights
 
     def train_multiple_estimator(
@@ -380,6 +324,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             val_every = train_config.get('val_every', num_iters)
             print_every = train_config.get('print_every', num_iters + 1)
             train_type = train_config.get('train_type', 'iter')
+            weight_type = train_config.get('weight_type', 'both')
 
             if train_type == "epoch":
                 num_iters = num_iters * len(train_dl)
@@ -414,7 +359,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             
                 # use mse as the loss
                 if weighted_training:
-                    weights = self._calculate_weights(batch_x,batch_y).detach()
+                    weights = self._calculate_weights(batch_x,batch_y, weight_type = weight_type).detach()
                     loss = torch.mean(torch.square(mu_train - batch_y) * weights)
                 else:
                     loss = torch.mean(torch.square(mu_train - batch_y))
