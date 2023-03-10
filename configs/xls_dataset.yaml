@@ -1,4 +1,3 @@
-# Estimator configurations
 estimator: # basic MLP layer configuration
   class: 'ensemble'
   num_networks : 5
@@ -10,29 +9,23 @@ estimator: # basic MLP layer configuration
       - fc1 : {class : Linear, in_features : 8, out_features : 50}
       - projection : {class : Linear, in_features : 50, out_features : 1}
   optimizer:
-    class : 'Adam'
+    class : 'QHAdam'
     lr : 0.01
-
-# Dataset configurations
 dataset:
   class: 'xls'
-  path: "regression_datasets/Concrete_Data.xls"
+  xls_path: "regression_datasets/Concrete_Data.xls"
   batch_size : 512  
   cv_split_num: 10
   test_ratio: 0.10
 transforms:
   x :
-    - {class : Standardize}
+  - {class : Standardize , mean : [0], std : [1]}
   y :
-    - {class : Standardize}
-
-# Training configurations
+    - {class : Standardize, mean : [0], std : [1]}
 train:
   train_type : epoch
   num_iter : 40
   weight_type : both
-
-# Logger configurations
 # logger:
 #   type: 'wandb'
 #   project: 'uncertainty-estimation'

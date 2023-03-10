@@ -1,0 +1,33 @@
+estimator: # basic MLP layer configuration
+  class: 'ensemble'
+  num_networks : 5
+  network:
+    estimator_network:
+      - resnet_branch : {class : ResNet, block : Bottleneck, layers : [3,4,6,3], pred_head : LinearVarianceNetworkHead}
+    predictor_network: 
+      - resnet_branch : {class : ResNet, block : Bottleneck, layers : [3,4,6,3], pred_head : Linear}
+  optimizer:
+    class : 'Adam'
+    lr : 0.01
+dataset:
+  class: 'imdb-wiki'
+  data_dir : "regression_datasets/imdb_wiki/data"
+  batch_size : 4  
+transforms:
+  x :
+    - {class : Resize, size : [224, 224]}
+    - {class : RandomCrop, size : 224, padding : 16}
+    - {class : RandomHorizontalFlip}
+    - {class : ToTensor}
+    - {class : Normalize, mean : [.5, .5, .5], std : [.5, .5, .5]}
+  y :
+    - {class : MinMaxNormalize, min_val : [0], max_val : [121]}
+train:
+  train_type : epoch
+  num_iter : 1
+  weight_type : both
+logger:
+  type: 'wandb'
+  project: 'uncertainty-estimation'
+  entity: 'kbora'
+  name: 'Toy Dataset Complex Weighted'
