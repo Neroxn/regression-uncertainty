@@ -144,19 +144,20 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 else:
                     raise ValueError("Train type not supported. Please choose from iter, epoch")
                 
-                batch_x, batch_y = x_transform.forward(batch_x), y_transform.forward(batch_y)
-
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
 
                 # get the network prediction for the training data
                 mu_train, sigma_train = networks[k](batch_x)
-            
 
                 loss = torch.mean(
                     (0.5*torch.log(sigma_train) + 0.5*(torch.square(batch_y - mu_train))/sigma_train)
                     + 5) 
                     
+                #mse loss
+                loss = torch.mean(
+                    torch.square(batch_y - mu_train)
+                    )
                 if torch.isnan(loss):
                     raise ValueError('Loss is NaN')
 
@@ -235,7 +236,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             elif len(batch) == 1:
                 batch_x = batch[0]
                 batch_y = torch.zeros((batch_x.shape[0], 1))
-            batch_x = x_transform.forward(batch_x)
             batch_y_true[current_index: current_index + batch_y.shape[0],0] = batch_y.reshape((batch_y.shape[0])).cpu()
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
@@ -290,7 +290,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             elif len(batch) == 1:
                 batch_x = batch[0]
                 batch_y = torch.zeros((batch_x.shape[0], 1))
-            batch_x = x_transform.forward(batch_x)
             batch_y_true[current_index: current_index + batch_y.shape[0],0] = batch_y.reshape((batch_y.shape[0])).cpu()
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
@@ -349,7 +348,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 else:
                     raise ValueError("Train type not supported. Please choose from iter, epoch")
                 
-                batch_x, batch_y = x_transform.forward(batch_x), y_transform.forward(batch_y)
 
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)

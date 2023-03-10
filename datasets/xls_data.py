@@ -4,19 +4,35 @@ import numpy as np
 from typing import *
 import matplotlib.pyplot as plt
 from sklearn.utils import shuffle
+import os
 import pandas as pd
  
 class XLSParser():
-    """ Load any XLS OR CSV file into a numpy array."""
-    def __init__(self, xls_path) -> None:
+    """
+    Parser for the `.csv`or `.xls` tabular data files. The data will be parsed into x and y values.
+    """
+    def __init__(self, xls_path : Union[str,os.PathLike]) -> None:
+        """
+        xls_path (Union[str, os.PathLike]) : Path to the xls file.
+        """
         self.xls_path = xls_path
         if self.xls_path.endswith(".csv"):
             self.data = pd.read_csv(self.xls_path)
         else:
             self.data = pd.read_excel(self.xls_path)
 
-    def parse(self, x_col : list, y_col : list) -> Tuple[np.ndarray, np.ndarray]:
-        """ Parse the data into x and y values. """
+    def parse(self, x_col : Optional[list], y_col : Optional[list]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Parse the data into x and y values.
+
+        Args:
+            - x_col (Optional[list]) : Column index of the x values. If None, all columns except the last one will be used.
+            - y_col (Optional[list]) : Column index of the y values. If None, the last column will be used.
+        
+        Returns:
+            - x (np.ndarray) : x values.
+            - y (np.ndarray) : y values.
+        """
         if x_col is None and y_col is None:
             self.x = self.data.iloc[:, :-1].values
             self.y = self.data.iloc[:, -1].values
@@ -39,10 +55,12 @@ class XLSParser():
         return self.x, self.y
         
 class XLSDataset(Dataset):
-    def __init__(self, x, y):
+    def __init__(self, x : np.array, y : np.array, transforms : Tuple):
         self.x = np.array(x, dtype = np.float32)
         self.y = np.array(y, dtype = np.float32)
-        
+
+        self.x_transform, self.y_transform = transforms
+
     def __len__(self):
         """
         Return the shape of the dataset. In this case, it is the number of data points.
@@ -53,30 +71,39 @@ class XLSDataset(Dataset):
         """
         Transform the data to torch.Tensor
         """
-        return self.x[idx], self.y[idx]
+        return self.x_transform(self.x[idx]), self.y_transform(self.y[idx])
 
 
-def create_xls_dataloader(**kwargs):
+def create_xls_dataloader(
+        transforms : Tuple,
+        xls_path : Union[str, os.PathLike],
+        batch_size : int = 32,
+        cv_split_num : int = 1,
+        test_ratio : float = 0.2,
+        x_col : Optional[list] = None,
+        y_col : Optional[list] = None,
+        **kwargs):
     """
-    A simple dataloader for the toy dataset.
-    Args:
-        batch_size (int): batch size
-        test_ratio (float): ratio of test data
+    A simple dataloader for the reading XLS/CSV files. The data will be split into a training and validation set.
     
+    Args:
+        - transforms (Tuple[Transform,Transform]) : List of x and y transform that will be applied when sampled.
+            Transforms are composed with `transforms.Transform` class. 
+        - xls_path (Union[str, os.PathLike]) : Path to the xls file.
+        - batch_size (int) : Batch size for the dataloader. `-1` denotes that the whole dataset will be used.
+        - cv_split_num (int) : Number of cross validation splits.
+        - test_ratio (float) : Ratio of the test set.
+        - x_col (Optional[list]) : Column index of the x values. If None, all columns except the last one will be used.
+        - y_col (Optional[list]) : Column index of the y values. If None, the last column will be used.
+
     Returns:
-        train_loader (torch.utils.data.DataLoader): dataloader for training
-        test_loader (torch.utils.data.DataLoader): dataloader for testing
+        - train_loader (DataLoader) : Dataloader for the training set.
+        - val_loader (DataLoader) : Dataloader for the validation set.
+        - train_dataset (XLSDataset) : Dataset for the training set.
+        - val_dataset (XLSDataset) : Dataset for the validation set.
     """
-    xls_path = kwargs.pop("path")
-    batch_size = kwargs.pop("batch_size", 32)
-    cv_split_num = kwargs.pop("cv_split_num", 1)
-    test_ratio = kwargs.pop("test_ratio", 0.2)
 
     parser = XLSParser(xls_path)
-
-    x_col = kwargs.pop("x_col", None)
-    y_col = kwargs.pop("y_col", None)
-
     x, y = parser.parse(x_col, y_col)
     num_test = int(x.shape[0] * test_ratio)
 
@@ -84,18 +111,18 @@ def create_xls_dataloader(**kwargs):
         batch_size = x.shape[0]
         
     # create train and test data for cross validation
-    for i in range(cv_split_num):
+    for _ in range(cv_split_num):
         x, y = shuffle(x, y)
         test_x,test_y = x[:num_test], y[:num_test]
         train_x, train_y = x[num_test:], y[num_test:]
 
         # create dataloader
-        train_dataset = XLSDataset(train_x, train_y)
-        test_dataset = XLSDataset(test_x, test_y)
+        train_dataset = XLSDataset(train_x, train_y, transforms)
+        val_dataset = XLSDataset(test_x, test_y, transforms)
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-        yield train_loader, test_loader, train_dataset, test_dataset
+        yield train_loader, val_loader, train_dataset, val_dataset
 
     
