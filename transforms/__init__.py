@@ -1,7 +1,6 @@
 import torchvision
 from .base import Transform,PytorchWrapper
 from .normalize import MinMaxNormalize, Standardize
-from .to_tensor import ToTensor
 from .compose import Compose
 import torch 
 
@@ -11,8 +10,6 @@ from copy import deepcopy
 TRANSFORM_REGISTRY = {
     'MinMaxNormalize': MinMaxNormalize,
     'Standardize': Standardize,
-    'ToTensor': ToTensor,
-    None: Transform
 }
 
 PYTORCH_REGISTRY  = {}
@@ -20,9 +17,8 @@ PYTORCH_REGISTRY  = {}
 # add pytorch transforms to the registry. 
 for name in dir(torchvision.transforms):
     obj = getattr(torchvision.transforms, name)
-    if isinstance(obj, type) and issubclass(obj, torch.nn.Module):
+    if isinstance(obj, type):
         PYTORCH_REGISTRY[name] = obj
-
 
 def create_transform(cfg_):
     """Build transforms from config"""
