@@ -15,10 +15,10 @@ class LinearVarianceNetworkHead(torch.nn.Module):
 
 class Conv2DVarianceNetworkHead(torch.nn.Module):
     """ A simple VarianceNetwork head for CNN"""
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_channel, out_channnel):
         super(Conv2DVarianceNetworkHead, self).__init__()
-        self.mu = torch.nn.Conv2d(in_features, out_features, 1)
-        self.log_var = torch.nn.Conv2d(in_features, out_features, 1)
+        self.mu = torch.nn.Conv2d(in_channel, out_channnel, 1)
+        self.log_var = torch.nn.Conv2d(in_channel, out_channnel, 1)
 
     def forward(self, x):
         mu = self.mu(x)
