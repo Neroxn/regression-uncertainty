@@ -99,31 +99,20 @@ if __name__ == '__main__':
     logger.info(f"Created logger : \n\t{metric_logger}")
     logger.info(f"Using device : {device}")
     
-    ######## Create Dataloader ########
-    dl_split_iterator = create_dataloader(dataset_config) # yields train_loader, val_loader, train_ds, val_ds
 
     ######### Create Transforms #########
     x_transforms = Compose([create_transform(transform) for transform in transform_config.get("x", [])])
     y_transforms = Compose([create_transform(transform) for transform in transform_config.get("y", [])])
 
-    ######### Start Cross-Validation #########
+    ######## Create Dataloader ########
+    dl_split_iterator = create_dataloader(dataset_config, (x_transforms, y_transforms)) # yields train_loader, val_loader, train_ds, val_ds
+
+    ######### Start Cross-Validation (Optional, if cv_split_num is 1, it is a regular training) #########
     cv_track_list = {}
     for i,(train_loader, val_loader, train_ds, val_ds) in enumerate(dl_split_iterator):
-        logger.info(f"Created dataloaders with shape train : {train_ds.x.shape},{train_ds.y.shape} and {val_ds.x.shape},{val_ds.y.shape}") 
-        
         ######## Create estimator #########
         estimator = create_estimator(estimator_config)
         logger.info(f"Created estimator : \n\t{estimator}")
-
-        for transform in x_transforms.transforms:
-            if transform.is_pass_required:
-                transform(np.concatenate([train_ds.x, val_ds.x], axis=0))
-        
-        for transform in y_transforms.transforms:
-            if transform.is_pass_required:
-                transform(np.concatenate([train_ds.y, val_ds.y], axis=0))
-    
-        logger.info(f"Created transforms : \n\tx: {x_transforms}\n\ty: {y_transforms}")
 
         ######### Train uncertainty estimator #########
         if args.load_from is None:
