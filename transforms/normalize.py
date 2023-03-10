@@ -1,39 +1,36 @@
 import numpy as np 
-from typing import Tuple
+from typing import Tuple, Union
 import torch
 import transforms.base 
 
+ArrayLike = Union[np.ndarray, torch.Tensor, list]
 
 class MinMaxNormalize(transforms.base.Transform):
-    def __init__(self, x_min : torch.Tensor = None, x_max : torch.Tensor = None, **kwargs):
+    def __init__(self, min_val : ArrayLike, max_val : ArrayLike):
         super(MinMaxNormalize, self).__init__()
-        self.is_pass_required = True if x_min is None and x_max is None else False
+        if isinstance(min_val, list):
+            min_val = np.array(min_val)
+        if isinstance(max_val, list):
+            max_val = np.array(max_val)
+        if isinstance(min_val, np.ndarray):
+            min_val = torch.from_numpy(min_val)
+        if isinstance(max_val, np.ndarray):
+            max_val = torch.from_numpy(max_val)
 
-        if isinstance(x_min, np.ndarray):
-            x_min = torch.from_numpy(x_min)
-        if isinstance(x_max, np.ndarray):
-            x_max = torch.from_numpy(x_max)
-
-        self.x_min = x_min
-        self.x_max = x_max
+        self.min_val = min_val
+        self.max_val = max_val
 
 
     def forward(self, x : torch.Tensor) -> torch.Tensor:
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x)
-
-        if self.x_min is None:
-            self.x_min = torch.min(x, axis=0)
-
-        if self.x_max is None:
-            self.x_max = torch.max(x, axis=0)
             
         # check if all tensors on the same device
-        if x.device != self.x_min.device:
-            self.x_min = self.x_min.to(x.device)
-            self.x_max = self.x_max.to(x.device)
+        if x.device != self.min_val.device:
+            self.min_val = self.min_val.to(x.device)
+            self.max_val = self.max_val.to(x.device)
 
-        x = (x - self.x_min) / (self.x_max - self.x_min)
+        x = (x - self.min_val) / (self.max_val - self.min_val)
 
         return x
 
@@ -41,48 +38,47 @@ class MinMaxNormalize(transforms.base.Transform):
     def backward(self, x : torch.Tensor) -> torch.Tensor:
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x)
-        x = x * (self.x_max - self.x_min) + self.x_min
 
         # check if all tensors on the same device
-        if x.device != self.x_min.device:
-            self.x_min = self.x_min.to(x.device)
-            self.x_max = self.x_max.to(x.device)
+        if x.device != self.min_val.device:
+            self.min_val = self.min_val.to(x.device)
+            self.max_val = self.max_val.to(x.device)
+
+        x = x * (self.max_val - self.min_val) + self.min_val
         return x
 
     def __str__(self) -> str:
-        return f"MinMaxNormalize(x_min={self.x_min}, x_max={self.x_max})"
+        return f"MinMaxNormalize(min_val={self.min_val}, max_val={self.max_val})"
 
 class Standardize(transforms.base.Transform):
-    def __init__(self, x_mean : torch.Tensor = None, x_std : torch.Tensor = None, **kwargs):
+    def __init__(self, mean : ArrayLike, std : ArrayLike):
         super(Standardize, self).__init__()
-        self.is_pass_required = True if x_mean is None and x_std is None else False
 
-        if isinstance(x_mean, np.ndarray):
-            x_mean = torch.from_numpy(x_mean)
-        if isinstance(x_std, np.ndarray):
-            x_std = torch.from_numpy(x_std)
+        if isinstance(mean, list):
+            mean = np.array(mean)
+        if isinstance(std, list):
+            std = np.array(std)
+        if isinstance(mean, np.ndarray):
+            mean = torch.from_numpy(mean)
+        if isinstance(std, np.ndarray):
+            std = torch.from_numpy(std)
 
-        self.x_mean = x_mean
-        self.x_std = x_std
+        self.mean = mean
+        self.std = std
 
 
     def forward(self, x : torch.Tensor) -> torch.Tensor:
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x)
-
-        if self.x_mean is None:
-            self.x_mean = torch.mean(x, axis=0)
-
-        if self.x_std is None:
-            self.x_std = torch.std(x, axis=0)
         
         # check if all tensors on the same device
-        if x.device != self.x_mean.device:
-            self.x_mean = self.x_mean.to(x.device)
-            self.x_std = self.x_std.to(x.device)
+        if x.device != self.mean.device:
+            self.mean = self.mean.to(x.device)
+            self.std = self.std.to(x.device)
 
-        x = (x - self.x_mean) / self.x_std
+        x = (x - self.mean) / self.std
 
+        print(x)
         return x
 
     def backward(self, x : torch.Tensor) -> torch.Tensor:
@@ -90,13 +86,13 @@ class Standardize(transforms.base.Transform):
             x = torch.from_numpy(x)
 
         # check if all tensors on the same device
-        if x.device != self.x_mean.device:
-            self.x_mean = self.x_mean.to(x.device)
-            self.x_std = self.x_std.to(x.device)
+        if x.device != self.mean.device:
+            self.mean = self.mean.to(x.device)
+            self.std = self.std.to(x.device)
 
-        x = x * self.x_std + self.x_mean
+        x = x * self.std + self.mean
         return x
 
     def __str__(self) -> str:
-        return f"Standardize(x_mean={self.x_mean}, x_std={self.x_std})"
+        return f"Standardize(mean={self.mean}, std={self.std})"
 
