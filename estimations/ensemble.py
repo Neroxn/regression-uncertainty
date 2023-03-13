@@ -352,12 +352,10 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
 
-                # get the network prediction for the training data
-                mu_train = predictor(batch_x)
-            
+                mu_train = predictor(batch_x) # predict mean
                 # use mse as the loss
                 if weighted_training:
-                    weights = self._calculate_weights(batch_x,batch_y, weight_type = weight_type).detach()
+                    weights = self._calculate_weights(batch_x,batch_y, weight_type = weight_type).detach().to(device)
                     loss = torch.mean(torch.square(mu_train - batch_y) * weights)
                 else:
                     loss = torch.mean(torch.square(mu_train - batch_y))

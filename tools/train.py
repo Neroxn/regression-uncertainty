@@ -20,7 +20,6 @@ from datasets import create_dataloader
 from utils import create_logger
 from estimations import create_estimator
 from transforms import create_transform
-from models import create_model
 from transforms.compose import Compose
 
 def parse_config(config_path):
@@ -133,7 +132,7 @@ if __name__ == '__main__':
                 network.load_state_dict(torch.load(os.path.join(args.load_from, f"network_{i}.pth")))
 
         ######## Train final predictor network #########
-        estimator.train_predictor(
+        predictor = estimator.train_predictor(
             weighted_training=args.weighted_training,
             train_config = train_config,
             train_dl = train_loader,
@@ -157,15 +156,16 @@ if __name__ == '__main__':
 
     logger.info("Training finished")
 
-    # ######### Save networks ##########
-    # logger.info(f"Saving networks to the path : {args.checkpoint}")
-    # if args.checkpoint is not None:
-    #     logger.info(f"Saving networks to {args.checkpoint}")
+    ######### Save networks ##########
+    if args.checkpoint is not None:
+        logger.info(f"Saving networks to {args.checkpoint}")
 
-    #     checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
-    #     if not os.path.exists(checkpoint_folder):
-    #         os.makedirs(checkpoint_folder)
+        checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+        if not os.path.exists(checkpoint_folder):
+            os.makedirs(checkpoint_folder)
         
-    #     for i, network in enumerate(networks):
-    #         torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"network_{i}.pth"))
+        for i, network in enumerate(networks):
+            torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"estimator_network_{i}.pth"))
+
+        torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
 
