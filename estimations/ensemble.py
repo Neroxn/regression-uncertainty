@@ -113,7 +113,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             val_every = val_every * len(train_dl)
             print_every = print_every * len(train_dl)
 
-        x_transform,y_transform = transforms
+        _,y_transform = transforms
         networks = self.estimators
         optimizers = self.estimators_optimizer
         num_networks = len(networks)
@@ -166,7 +166,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 loss.backward()
 
                 # clamp gradients that are too big
-                torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 5.0)
+                torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 30.0)
 
                 optimizers[k].step()
 
@@ -226,11 +226,11 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
         batch_y_true = torch.zeros([len(val_dataloader.dataset), 1])
 
-        x_transform, y_transform = transforms
+        _, y_transform = transforms
 
         current_index = 0
 
-        for i, batch in enumerate(val_dataloader):
+        for batch in tqdm.tqdm(val_dataloader):
             if len(batch) == 2:
                 batch_x, batch_y = batch
             elif len(batch) == 1:
@@ -284,7 +284,10 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
         current_index = 0
 
-        for i, batch in enumerate(val_dataloader):
+        # move network to device
+        predictor.to(device)
+        
+        for batch in tqdm.tqdm(val_dataloader):
             if len(batch) == 2:
                 batch_x, batch_y = batch
             elif len(batch) == 1:
@@ -294,8 +297,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
 
-            # move network to device
-            predictor.to(device)
             with torch.no_grad():
                 mu = predictor(batch_x)         
                 out_mu[current_index:current_index + mu.shape[0]] = mu.reshape((mu.shape[0])).cpu()
