@@ -12,9 +12,9 @@ class IMDBWIKI(Dataset):
     def __init__(self, df, data_dir, transforms):
         self.df = df
         self.data_dir = data_dir
-
         self.x_transform, self.y_transform = transforms
 
+        self.weights = {}
     def __len__(self):
         return len(self.df)
 

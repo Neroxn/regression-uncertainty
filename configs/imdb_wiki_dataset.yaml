@@ -12,7 +12,7 @@ estimator: # basic MLP layer configuration
 dataset:
   class: 'imdb-wiki'
   data_dir : "regression_datasets/imdb_wiki/data"
-  batch_size : 4  
+  batch_size : 32
 transforms:
   x :
     - {class : Resize, size : [224, 224]}
@@ -23,11 +23,12 @@ transforms:
   y :
     - {class : MinMaxNormalize, min_val : [0], max_val : [121]}
 train:
-  train_type : epoch
-  num_iter : 1
+  train_type : iter
+  num_iter : 250
+  #val_every : 250
   weight_type : both
-logger:
-  type: 'wandb'
-  project: 'uncertainty-estimation'
-  entity: 'kbora'
-  name: 'Toy Dataset Complex Weighted'
+# logger:
+#   type: 'wandb'
+#   project: 'uncertainty-estimation'
+#   entity: 'kbora'
+#   name: 'Toy Dataset Complex Weighted'
