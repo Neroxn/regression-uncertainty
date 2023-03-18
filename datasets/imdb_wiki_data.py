@@ -8,13 +8,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import *
 
+pd.options.mode.chained_assignment = None  # default='warn'
+
+
 class IMDBWIKI(Dataset):
-    def __init__(self, df, data_dir, transforms):
+    def __init__(self, df, data_dir, transforms : dict = None):
         self.df = df
         self.data_dir = data_dir
-        self.x_transform, self.y_transform = transforms
 
-        self.weights = {}
+        if transforms is None:
+            self.x_transform = lambda x: x
+            self.y_transform = lambda x: x
+        else:
+            self.x_transform, self.y_transform = transforms.get('x'), transforms.get('y')
+
+        self.age_to_frequency = {}
     def __len__(self):
         return len(self.df)
 
@@ -26,15 +34,43 @@ class IMDBWIKI(Dataset):
 
         return self.x_transform.forward(img), self.y_transform.forward(label)
 
+    def get_category_bins(self, bin_size = 1):
+        """
+        Divide the continious region into bins with bin_size. Assign continuous value to each bin.
+        """
+        min_age = self.df['age'].min()
+        max_age = self.df['age'].max()
+
+        bins = (max_age - min_age) // bin_size + 1
+        self.df.loc[:,'age_bin'] = pd.cut(self.df.loc[:,'age'], bins = bins, labels = np.arange(bins))
+
+    def assign_frequency_label(self):
+        """
+        Assign frequency label to bin distribution.
+        For 'many-shot' > 100 samples, 'medium-shot' 20-100 samples, 'few-shot' 1-10 samples.
+        """
+        self.df.loc[:,'frequency'] = self.df.groupby('age_bin')['age_bin'].transform('count')
+        self.df.loc[:,'frequency_label'] = pd.cut(self.df.loc[:,'frequency'], bins = [0, 10, 100, np.inf], labels = ['few-shot', 'medium-shot', 'many-shot'])
+        self.df.loc[:,'frequency_label'] = self.df.loc[:,'frequency_label'].astype('category')
+
+    def get_categories(self):
+        """
+        Given continious values of y, return the category of the y.
+        """
+        return self.age_to_frequency
+    
+    def get_transform(self):
+        return self.x_transform, self.y_transform
+    
 def create_imdb_wiki_dataloader(
-        transforms : Tuple,
+        transforms : dict,
         data_dir : Union[str, os.PathLike],
         batch_size : int = 32) -> Tuple[DataLoader, DataLoader, Dataset, Dataset]:
     """
     Dataloader for the IMDB-WIKI dataset.
 
     Args:
-        - transforms (Tuple) : Tuple of transforms for the x and y values.
+        - transforms (dict) : Dictionary for the transformation.
         - data_dir (Union[str, os.PathLike]) : Path to the data directory.
         - batch_size (int) : Batch size for the dataloader.
 
@@ -45,13 +81,44 @@ def create_imdb_wiki_dataloader(
         - val_dataset (IMDBWIKI) : Dataset for the validation set.
     """
     df = pd.read_csv(os.path.join(data_dir,"imdb_wiki.csv"))
-    df_train, df_val = df[df["split"] == "train"], df[df["split"] == "val"]
-    train_ds, val_ds = IMDBWIKI(df_train,data_dir, transforms), IMDBWIKI(df_val, data_dir, transforms)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,drop_last=False)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, drop_last=False)
-    
-    yield train_loader, val_loader, train_ds, val_ds
+    df_train, df_val,df_test = df[df["split"] == "train"], df[df["split"] == "val"], df[df["split"] == "test"]
+
+    # for age values in df_val, find its frequency in df_train and label accordingly
+    train_ds = IMDBWIKI(df_train,data_dir, transforms["train"])
+    val_ds = IMDBWIKI(df_val, data_dir, transforms["val"])
+    test_ds = IMDBWIKI(df_test, data_dir, transforms["test"])
+
+    print(np.unique(train_ds.df['age'].values,return_counts=True))
+    train_ds.get_category_bins(bin_size=1)
+    train_ds.assign_frequency_label()
+
+    # get a map for age : frequency_label
+    for age in train_ds.df['age'].unique():
+        label = train_ds.df[train_ds.df['age'] == age]['frequency_label'].values[0]
+        train_ds.age_to_frequency[age] = label
+
+    val_ds.age_to_frequency = train_ds.age_to_frequency
+    min_val_age = val_ds.df['age'].min()
+    max_val_age = val_ds.df['age'].max()
+    for age in range(min_val_age, max_val_age+1):
+        if age not in val_ds.age_to_frequency.keys():
+            val_ds.age_to_frequency[age] = 'zero-shot'
+
+    test_ds.age_to_frequency = train_ds.age_to_frequency
+    min_test_age = test_ds.df['age'].min()
+    max_test_age = test_ds.df['age'].max()
+    for age in range(min_test_age, max_test_age+1):
+        if age not in test_ds.age_to_frequency.keys():
+            test_ds.age_to_frequency[age] = 'zero-shot'
 
 
-
-    
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              drop_last=False,pin_memory=True
+                              )
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                              drop_last=False, pin_memory=True
+                              )
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                              drop_last=False, pin_memory=True
+                              )
+    yield train_loader, val_loader, test_loader
