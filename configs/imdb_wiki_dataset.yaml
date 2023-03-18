@@ -8,27 +8,50 @@ estimator: # basic MLP layer configuration
       - resnet_branch : {class : ResNet, block : Bottleneck, layers : [3,4,6,3], pred_head : Linear}
   optimizer:
     class : 'Adam'
-    lr : 0.01
+    lr : 0.001
+    scheduler : {class : MultiStepLR, milestones : [60,80], gamma : 0.1}
+
 dataset:
   class: 'imdb-wiki'
   data_dir : "regression_datasets/imdb_wiki/data"
-  batch_size : 64
+  batch_size : 4
 transforms:
-  x :
-    - {class : Resize, size : [224, 224]}
-    - {class : RandomCrop, size : 224, padding : 16}
-    - {class : RandomHorizontalFlip}
-    - {class : ToTensor}
-    - {class : Normalize, mean : [.5, .5, .5], std : [.5, .5, .5]}
-  y :
-    - {class : MinMaxNormalize, min_val : [0], max_val : [121]}
+    train:
+      x :
+        - {class : Resize, size : [224, 224]}
+        - {class : RandomCrop, size : 224, padding : 16}
+        - {class : RandomHorizontalFlip}
+        - {class : ToTensor}
+        - {class : Normalize, mean : [.5, .5, .5], std : [.5, .5, .5]}
+      y :
+        - {class : MinMaxNormalize, min_val : [0], max_val : [186]}
+    val:
+      x : 
+        - {class : Resize, size : [224, 224]}
+        - {class : ToTensor}
+        - {class : Normalize, mean : [.5, .5, .5], std : [.5, .5, .5]}
+      y : 
+        - {class : MinMaxNormalize, min_val : [0], max_val : [186]}
+
 train:
-  train_type : epoch
-  num_iter : 10
-  val_every : 0.25
+  train_type : iter
+  num_iter : 90
+  val_every : 90
   weight_type : 'epistemic'
-logger:
-  type: 'wandb'
-  project: 'uncertainty-estimation'
-  entity: 'kbora'
-  name: 'IMDB-WIKI R50 Weighted (Epistemic)'
+# logger:
+#   type: 'wandb'
+#   project: 'uncertainty-estimation'
+#   entity: 'kbora'
+#   name: 'IMDB-WIKI R50 Weighted (Epistemic)'
+metrics:
+  categorize : True
+  list:
+    train:
+      - "rmse"
+      - "mae"
+    val:
+      - "rmse"
+      - "mae"
+    test:
+      - "rmse"
+      - "mae"
