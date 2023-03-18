@@ -17,9 +17,9 @@ from utils.device import set_device, set_random
 from datasets.toy_data import *
 
 from datasets import create_dataloader
-from utils import create_logger
+from utils import create_logger, create_metric_list
 from estimations import create_estimator
-from transforms import create_transform
+from transforms import get_transforms
 from transforms.compose import Compose
 
 def parse_config(config_path):
@@ -82,6 +82,7 @@ if __name__ == '__main__':
     dataset_config = config.get("dataset")
     transform_config = config.get("transforms", None)
     logger_config = config.get("logger",None)
+    metric_config = config.get("metrics",None)
     set_random()
     
     ######### Create logger #########
@@ -98,20 +99,31 @@ if __name__ == '__main__':
     logger.info(f"Created logger : \n\t{metric_logger}")
     logger.info(f"Using device : {device}")
     
+    ######### Create metrics #########
+    metrics = {}
+    if metric_config is not None:
+        metric_config_list = metric_config.get("list")
+        metrics["train"] = create_metric_list(metric_config_list.get("train", []))
+        metrics["val"] = create_metric_list(metric_config_list.get("val", []))
+        metrics["test"] = create_metric_list(metric_config_list.get("test",[]))
 
+    categorize = metric_config.get("categorize", False)
     ######### Create Transforms #########
-    x_transforms = Compose([create_transform(transform) for transform in transform_config.get("x", [])])
-    y_transforms = Compose([create_transform(transform) for transform in transform_config.get("y", [])])
+    transforms = get_transforms(transform_config)
+    
 
     ######## Create Dataloader ########
-    dl_split_iterator = create_dataloader(dataset_config, (x_transforms, y_transforms)) # yields train_loader, val_loader, train_ds, val_ds
+    dl_split_iterator = create_dataloader(dataset_config, transforms) # yields train_loader, val_loader, train_ds, val_ds
+    logger.info(f"Created dataloader : \n\t{dl_split_iterator}")
 
     ######### Start Cross-Validation (Optional, if cv_split_num is 1, it is a regular training) #########
     cv_track_list = {}
-    for i,(train_loader, val_loader, train_ds, val_ds) in enumerate(dl_split_iterator):
+    for i,(train_loader, val_loader, test_loader) in enumerate(dl_split_iterator):
+
         ######## Create estimator #########
-        estimator = create_estimator(estimator_config)
+        estimator = create_estimator(estimator_config, num_networks=estimator_config.get("num_networks",0))
         logger.info(f"Created estimator : \n\t{estimator}")
+
         ######### Train uncertainty estimator #########
         if args.load_from is None:
             networks = estimator.train_estimator(
@@ -119,9 +131,12 @@ if __name__ == '__main__':
                 train_dl = train_loader,
                 val_dl = val_loader,
                 device = device,
-                transforms = (x_transforms, y_transforms),
+                transforms = transforms,
                 logger_prefix = f"estimator",
-                logger = metric_logger)
+                logger = metric_logger,
+                metrics = metrics,
+                )
+            
             if args.checkpoint is not None:
                 logger.info(f"Saving networks to {args.checkpoint}")
 
@@ -135,23 +150,33 @@ if __name__ == '__main__':
             estimator.init_estimator("estimator_network")
             networks = estimator.estimators
 
-            logger.info(f"Loading networks from {args.load_from}")
+            logger.info(f"Loading estimators from {args.load_from}")
             for i, network in enumerate(networks):
                 network.load_state_dict(torch.load(os.path.join(args.load_from, f"estimator_network_{i}.pth")))
                 network.to(device)
 
         ######## Train final predictor network #########
-        predictor = estimator.train_predictor(
-            weighted_training=args.weighted_training,
-            train_config = train_config,
-            train_dl = train_loader,
-            val_dl = val_loader,
-            device = device,
-            transforms = (x_transforms, y_transforms),
-            logger = metric_logger,
-            logger_prefix = f"predictor",
-            )
-        
+        if args.load_from is None:
+            print("Training predictor network")
+            predictor = estimator.train_predictor(
+                weighted_training=args.weighted_training,
+                train_config = train_config,
+                train_dl = train_loader,
+                val_dl = val_loader,
+                device = device,
+                transforms = transforms,
+                logger = metric_logger,
+                logger_prefix = f"predictor",
+                metrics = metrics,
+                categorize = categorize
+                )
+        else:
+            estimator.init_predictor("predictor_network")
+            predictor = estimator.predictor
+            logger.log(f"Loading predictor from {args.load_from}")
+            predictor.load_state_dict(torch.load(os.path.join(args.load_from, f"predictor_network.pth")))
+            predictor.to(device)
+            
         track_list = metric_logger.reset_track_list()
         for key, value in track_list.items():
             if key not in cv_track_list:
@@ -167,5 +192,6 @@ if __name__ == '__main__':
 
     ######### Save networks ##########
     if args.checkpoint is not None:
+        checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
         torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
 

@@ -4,13 +4,15 @@ import tqdm
 import estimations.base
 import utils.logger
 import transforms.base
+import utils.metrics
 from typing import Tuple
+import warnings
 
 torch.autograd.set_detect_anomaly(True)
 class EnsembleEstimator(estimations.base.UncertaintyEstimator):
-    def __init__(self, network_config, optimizer_config):
-        self.num_networks = network_config.get("num_networks", 5)
-
+    def __init__(self, network_config, optimizer_config, num_networks = 5):
+        self.num_networks = num_networks
+        self.scheduler_config = optimizer_config.pop("scheduler", None)
         self.optimizer_config = optimizer_config.copy()
         self.network_config = network_config.copy()
         
@@ -26,24 +28,31 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         """
         networks = []
         optimizers = []
+        schedulers = []
 
         num_networks = self.num_networks
+        print(f"Number of networks: {num_networks}")
         for i in range(num_networks):
             estimator = self._build_network(self.network_config.copy(), network_name)
             optimizer = self._build_optimizer(self.optimizer_config, estimator.parameters())
+            scheduler = self._build_scheduler(self.scheduler_config, optimizer)
 
             networks.append(estimator)
             optimizers.append(optimizer)
+            schedulers.append(scheduler)
         
         self.estimators = networks
         self.estimators_optimizer = optimizers
+        self.estimators_scheduler = schedulers
 
     def init_predictor(self, network_name : str):
         """
         Initialize predictor by using the network and optimizer config
         """
+
         self.predictor = self._build_network(self.network_config, network_name)
         self.predictor_optimizer = self._build_optimizer(self.optimizer_config, self.predictor.parameters())
+        self.predictor_scheduler = self._build_scheduler(self.scheduler_config, self.predictor_optimizer)
         
 
     def train_estimator(self, **kwargs):
@@ -99,9 +108,34 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         train_dl : torch.utils.data.DataLoader,
         val_dl : torch.utils.data.DataLoader,
         device : torch.device,
-        transforms : Tuple[transforms.base.Transform],
+        transforms : dict,
         logger : utils.logger.NetworkLogger,
-        logger_prefix : str = "estimator") -> None:
+        logger_prefix : str = "estimator",
+        metrics : dict = None,
+        categorize : bool = False
+        ) -> None:
+        """
+        Parameters:
+        -----------
+        train_config : dict
+            Dictionary containing the training configuration
+        train_dl : torch.utils.data.DataLoader
+            Training data loader
+        val_dl : torch.utils.data.DataLoader
+            Validation data loader
+        device : torch.device
+            Device to use for training
+        transforms : dict
+            Dictionary containing the transforms to be applied on the data
+        logger : utils.logger.NetworkLogger
+            Logger to log the training and validation metrics
+        logger_prefix : str
+            Prefix to be used for logging the metrics
+        metrics : dict
+            Dictionary containing the metrics to be used for training
+        categorize : bool
+            Whether to categorize the data or not
+        """
         
         num_iters = train_config.get("num_iter", 1000)
         val_every = train_config.get('val_every', num_iters)
@@ -113,38 +147,38 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             val_every = val_every * len(train_dl)
             print_every = print_every * len(train_dl)
 
-        _,y_transform = transforms
         networks = self.estimators
+        if len(networks) == 0:
+            warnings.warn("No networks found. Skipping the estimator training.")
+            return networks
+
         optimizers = self.estimators_optimizer
         num_networks = len(networks)
 
-        loss_train = torch.zeros((num_networks))
-        mse_train = torch.zeros((num_networks))
+        batch_sigma_pred = torch.zeros((num_networks, train_dl.batch_size))
+        batch_pred = torch.zeros((num_networks, train_dl.batch_size))
+        batch_true = torch.zeros((num_networks, train_dl.batch_size))
 
         self.device = device
-        for k in range(num_networks):
-            networks[k] = networks[k].to(device)
+        # for k in range(num_networks):
+        #     networks[k] = networks[k].to(device)
 
         # for epoch based training, create iterator per network
-        if train_type == 'epoch':
-            train_iters = []
-            for k in range(num_networks):
-                train_iters.append(iter(train_dl))
+        train_iters = []
+        for k in range(num_networks):
+            train_iters.append(iter(train_dl))
 
         for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
+            loss_train = 0
             for k in range(num_networks):
                 # move data to device
-                if train_type == 'iter':
-                    batch_x, batch_y = next(iter(train_dl))
-                elif train_type == 'epoch':
-                    try:
-                        batch_x, batch_y = next(train_iters[k]) # sample random batch
-                    except StopIteration:
-                        train_iters[k] = iter(train_dl)
-                        batch_x, batch_y = next(train_iters[k])
-                else:
-                    raise ValueError("Train type not supported. Please choose from iter, epoch")
+                try:
+                    batch_x, batch_y = next(train_iters[k]) # sample random batch
+                except StopIteration:
+                    train_iters[k] = iter(train_dl)
+                    batch_x, batch_y = next(train_iters[k])
                 
+                networks[k] = networks[k].to(device)
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
 
@@ -170,41 +204,92 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 30.0)
 
                 optimizers[k].step()
-
-                loss_train[k] += loss.to('cpu').item()
+                loss_train += loss
                 mu_train = mu_train.detach()
                 sigma_train = sigma_train.detach()
                 
-                batch_y_transformed = y_transform.backward(batch_y)
-                mu_train_transformed = y_transform.backward(mu_train)
+                batch_y_transformed = transforms["train"]["y"].backward(batch_y)
+                mu_train_transformed = transforms["train"]["y"].backward(mu_train)
 
-                mse_train[k] += torch.mean(
-                    torch.square(batch_y_transformed - mu_train_transformed)
-                    ).to('cpu')
-                
+                batch_pred[k] = mu_train_transformed.reshape(-1)
+                batch_true[k] = batch_y_transformed.reshape(-1)
+                batch_sigma_pred[k] = sigma_train.reshape(-1)
+
+                if train_type == 'epoch':
+                    # if epoch is passed
+                    if (num_iter + 1) % len(train_dl) == 0:
+                        self.estimators_scheduler[k].step()
+                else:
+                    self.estimators_scheduler[k].step()
+
+                networks[k] = networks[k].to("cpu")
+            # log the criterion/loss, current lr
             logger.log_metric(
                 metric_dict = {
-                    f"{logger_prefix}_loss" : torch.mean(loss_train),
-                    f"{logger_prefix}_mse_mu" : torch.mean(mse_train),
-                    f"{logger_prefix}_rmse_mu" : torch.sqrt(torch.mean(mse_train)),
+                logger_prefix + "_train_loss": loss.item(),
+                logger_prefix + "_lr": optimizers[0].param_groups[0]['lr'],
                 },
                 step = (num_iter + 1),
-                print_log = (num_iter + 1) % print_every == 0
             )
 
-            if (num_iter + 1) % val_every == 0:
-                val_mu, _, val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device)
+            train_metric_list = metrics.get("train", None)
+            if train_metric_list is not None:
+                train_average_result = {}
+                for k in range(num_networks):
+                    y_true = batch_true[k]
+                    y_pred = batch_pred[k]
+                    sigma_pred = batch_sigma_pred[k]
+
+                    # calculate the metrics
+                    train_metric_list.forward(y_pred = y_pred, y_true = y_true, sigma_pred = sigma_pred)
+                    train_result = train_metric_list.get_metrics()
+
+                    for key,val in train_result.items():
+                        if key not in train_average_result:
+                            train_average_result[key] = 0
+                        train_average_result[key] += val
+
+                    logger.log_metric(
+                        metric_dict = train_metric_list.get_metrics(add_prefix = logger_prefix + f"_train_{k}_"),
+                        step = (num_iter + 1),
+                    )
+
+                # average the metrics
                 logger.log_metric(
-                    metric_dict = {
-                        f"{logger_prefix}_val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
-                        f"{logger_prefix}_val_rmse_mean" : torch.sqrt(torch.mean(np.square(val_mu - val_true)))
-                    },
+                    metric_dict = {k: v/num_networks for k,v in train_average_result.items()},
                     step = (num_iter + 1),
-                )   
-            
-            loss_train = torch.zeros((num_networks))
-            mse_train = torch.zeros((num_networks))
- 
+                )
+
+            if (num_iter + 1) % val_every == 0:
+                    val_mu, _,  val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device)
+                    val_metric_list = metrics.get("val", None)
+                    if val_metric_list is not None:
+                        if categorize:
+                            assert hasattr(val_dl.dataset, "get_categories"), "Dataset class must have get_categories method"
+                            categories = val_dl.dataset.get_categories()
+
+                            # get category labels for all val_true
+                            val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
+                            print(val_true)
+                            for cat in np.unique(val_true_cat):
+                                cat_mask = val_true_cat == cat
+                                cat_val_true = val_true[cat_mask]
+                                cat_val_mu = val_mu[cat_mask]
+
+                                val_metric_list.forward(cat_val_mu, cat_val_true)
+                                logger.log_metric(
+                                    metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val_" + cat),
+                                    step = (num_iter + 1),
+                                )
+                        val_metric_list.forward(val_mu, val_true)
+                        logger.log_metric(
+                            metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val_"),
+                            step = (num_iter + 1),
+                        )
+            batch_sigma_pred = torch.zeros((num_networks, train_dl.batch_size))
+            batch_pred = torch.zeros((num_networks, train_dl.batch_size))
+            batch_true = torch.zeros((num_networks, train_dl.batch_size))
+    
         return networks
 
     def evaluate_multiple_networks(self, val_dataloader, networks, transforms, device, **kwargs):
@@ -225,9 +310,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         out_sig = torch.zeros([len(val_dataloader.dataset), num_networks])
 
         batch_y_true = torch.zeros([len(val_dataloader.dataset), 1])
-
-        _, y_transform = transforms
-
         current_index = 0
 
         for batch in tqdm.tqdm(val_dataloader):
@@ -245,13 +327,12 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 networks[j].to(device)
                 with torch.no_grad():
                     mu, sigma = networks[j](batch_x)         
-
                     out_mu[current_index:current_index + mu.shape[0],j] = mu.reshape((mu.shape[0])).cpu()
                     out_sig[current_index: current_index + mu.shape[0],j] = sigma.reshape((mu.shape[0])).cpu()
 
             current_index += mu.shape[0]
 
-        out_mu = y_transform.backward(out_mu)
+        out_mu = transforms["val"]["y"].backward(out_mu)
         out_mu_final  = torch.mean(out_mu, axis = 1).reshape(-1,1)
 
         out_sig_sample_aleatoric = torch.sqrt(torch.mean(out_sig, axis=1)) # model uncertainty
@@ -260,7 +341,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         
         return out_mu_final, out_sig_sample_aleatoric + out_sig_sample_epistemic, batch_y_true
     
-
 
     def evaluate_predictor(self, val_dataloader, predictor, transforms, device, **kwargs):
         """
@@ -276,17 +356,13 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         
         # output for ensemble network
         out_mu  = torch.zeros([len(val_dataloader.dataset)])
-
         batch_y_true = torch.zeros([len(val_dataloader.dataset), 1])
 
-        x_transform, y_transform = transforms
-
         current_index = 0
-
         # move network to device
         predictor.to(device)
         
-        for batch in tqdm.tqdm(val_dataloader):
+        for i,batch in tqdm.tqdm(enumerate(val_dataloader)):
             if len(batch) == 2:
                 batch_x, batch_y = batch
             elif len(batch) == 1:
@@ -302,11 +378,11 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
             current_index += mu.shape[0]
 
-        out_mu = y_transform.backward(out_mu)
+        out_mu = transforms["val"]["y"].backward(out_mu)
+        batch_y_true = transforms["val"]["y"].backward(batch_y_true)
         out_mu_final  = out_mu.reshape(-1,1)
 
         return out_mu_final, batch_y_true
-
 
     def train_single_predictor(
             self,
@@ -314,10 +390,13 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             train_dl : torch.utils.data.DataLoader,
             val_dl : torch.utils.data.DataLoader,
             device : torch.device,
-            transforms : Tuple[transforms.base.Transform],
+            transforms : dict,
             logger : utils.logger.NetworkLogger,
             logger_prefix : str = "estimator",
-            weighted_training = False) -> None:
+            weighted_training = False,
+            metrics : dict= None,
+            categorize : bool = False,
+            ) -> None:
             
             num_iters = train_config.get("num_iter", 1000)
             val_every = train_config.get('val_every', num_iters)
@@ -330,31 +409,23 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 val_every = int(val_every * len(train_dl))
                 print_every = int(print_every * len(train_dl))
 
-            x_transform,y_transform = transforms
-
             self.device = device
             predictor = self.predictor.to(device)
             optimizer = self.predictor_optimizer
 
             iter_dl = iter(train_dl)
             for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
-                # move data to device
-                if train_type == 'iter':
-                    batch_x, batch_y = next(iter(train_dl))
-                elif train_type == 'epoch':
-                    try:
-                        batch_x, batch_y = next(iter_dl) # sample random batch
-                    except StopIteration:
-                        batch_x, batch_y = next(iter(train_dl))
-                else:
-                    raise ValueError("Train type not supported. Please choose from iter, epoch")
-                
+                # move data to device'
+                try:
+                    batch_x, batch_y = next(iter_dl)
+                except StopIteration:
+                    iter_dl = iter(train_dl)
+                    batch_x, batch_y = next(iter_dl)
 
-                batch_x = batch_x.to(device)
-                batch_y = batch_y.to(device)
+                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
 
-                mu_train = predictor(batch_x) # predict mean
-                # use mse as the loss
+                mu_train = predictor(batch_x)
+                # calculate weight per sample
                 if weighted_training:
                     weights = self._calculate_weights(batch_x,batch_y, weight_type = weight_type).detach().to(device)
                     loss = torch.mean(torch.square(mu_train - batch_y) * weights)
@@ -369,41 +440,64 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 loss.backward()
 
                 # clamp gradients that are too big
-                torch.nn.utils.clip_grad_norm_(predictor.parameters(), 5.0)
+                # torch.nn.utils.clip_grad_norm_(predictor.parameters(), 30.0)
 
                 optimizer.step()
 
-                loss_train = loss.to('cpu').item()
+                if train_type == 'epoch':
+                    # if epoch is passed
+                    if (num_iter + 1) % len(train_dl) == 0:
+                        self.predictor_scheduler.step()
+                else:
+                    self.predictor_scheduler.step()
+
                 mu_train = mu_train.detach()
                 
-                batch_y_transformed = y_transform.backward(batch_y)
-                mu_train_transformed = y_transform.backward(mu_train)
+                batch_y_transformed = transforms["train"]["y"].backward(batch_y)
+                mu_train_transformed = transforms["train"]["y"].backward(mu_train)
 
-                mse_train = torch.mean(
-                    torch.square(batch_y_transformed - mu_train_transformed)
-                    ).to('cpu')
-                    
+                # log the criterion/loss, current lr
                 logger.log_metric(
                     metric_dict = {
-                        f"{logger_prefix}_loss" : loss_train,
-                        f"{logger_prefix}_mse_mu" : mse_train,
-                        f"{logger_prefix}_rmse_mu" : torch.sqrt(mse_train),
+                    logger_prefix + "_train_loss": loss.item(),
+                    logger_prefix + "_lr": optimizer.param_groups[0]['lr'],
                     },
                     step = (num_iter + 1),
                 )
 
+                train_metric_list = metrics.get("train", None)
+                if train_metric_list is not None:
+                    train_metric_list.forward(mu_train_transformed, batch_y_transformed)
+                    logger.log_metric(
+                        metric_dict = train_metric_list.get_metrics(add_prefix = logger_prefix),
+                        step = (num_iter + 1),
+                    )
+
                 if (num_iter + 1) % val_every == 0:
                     val_mu, val_true = self.evaluate_predictor(val_dl, predictor, transforms, device)
-                    logger.log_metric(
-                        metric_dict = {
-                            f"{logger_prefix}_val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
-                            f"{logger_prefix}_val_rmse_mean" : torch.sqrt(torch.mean(torch.square(val_mu - val_true)))
-                        },
-                        step = (num_iter + 1),
-                    )   
-                    print(f"MSE : {torch.mean(torch.square(val_mu - val_true))}, RMSE : {torch.sqrt(torch.mean(torch.square(val_mu - val_true)))}")
-                loss_train = 0 
-                mse_train = 0 
-    
-            return predictor
+                    val_metric_list = metrics.get("val", None)
+                    if val_metric_list is not None:
+                        if categorize:
+                            assert hasattr(val_dl.dataset, "get_categories"), "Dataset class must have get_categories method"
+                            categories = val_dl.dataset.get_categories()
 
+                            # get category labels for all val_true
+                            val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
+                            print(val_true)
+                            for cat in np.unique(val_true_cat):
+                                cat_mask = val_true_cat == cat
+                                cat_val_true = val_true[cat_mask]
+                                cat_val_mu = val_mu[cat_mask]
+
+                                val_metric_list.forward(cat_val_mu, cat_val_true)
+                                logger.log_metric(
+                                    metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_" + cat),
+                                    step = (num_iter + 1),
+                                )
+                        val_metric_list.forward(val_mu, val_true)
+                        logger.log_metric(
+                            metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix),
+                            step = (num_iter + 1),
+                        )
+        
+            return predictor

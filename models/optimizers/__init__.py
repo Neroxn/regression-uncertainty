@@ -1,15 +1,16 @@
 import torch.optim
-
-from .qhadam import QHAdam
 from copy import deepcopy
 
-OPTIMIZER_REGISTRY = {"QHAdam" : QHAdam}
+OPTIMIZER_REGISTRY = {}
+
 
 # Add all torch.optim optimizers to the registry
 for name in dir(torch.optim):
     obj = getattr(torch.optim, name)
     if isinstance(obj, type) and issubclass(obj, torch.optim.Optimizer):
         OPTIMIZER_REGISTRY[name] = obj
+
+
 
 def create_optimizer(params, cfg_):
     """Build optimizer from config"""

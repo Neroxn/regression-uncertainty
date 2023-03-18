@@ -3,6 +3,7 @@ import torch
 
 from models import create_model
 from models.optimizers import create_optimizer
+from models.schedulers import create_scheduler
 
 class UncertaintyEstimator(object):
     def init_estimator(self, **kwargs):
@@ -29,5 +30,8 @@ class UncertaintyEstimator(object):
     def _build_optimizer(self, optimizer_build_config, params):
         return create_optimizer(params, optimizer_build_config)
 
+    def _build_scheduler(self, scheduler_build_config, optimizer):
+        return create_scheduler(optimizer, scheduler_build_config)
+    
     def __repr__(self) -> str:
         return self.__class__.__name__ + '()'
