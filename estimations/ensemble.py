@@ -121,6 +121,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         loss_train = torch.zeros((num_networks))
         mse_train = torch.zeros((num_networks))
 
+        self.device = device
         for k in range(num_networks):
             networks[k] = networks[k].to(device)
 
@@ -192,7 +193,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             )
 
             if (num_iter + 1) % val_every == 0:
-                val_mu, _, val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device, logger = logger)
+                val_mu, _, val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device)
                 logger.log_metric(
                     metric_dict = {
                         f"{logger_prefix}_val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
@@ -217,7 +218,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             np.ndarray: predicted mean array
             np.ndarray: predicted standard deviation array
         """
-        logger = kwargs.get('logger', None)
         num_networks = len(networks)
         
         # output for ensemble network
@@ -273,7 +273,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             np.ndarray: predicted mean array
             np.ndarray: predicted standard deviation array
         """
-        logger = kwargs.get('logger', None)
         
         # output for ensemble network
         out_mu  = torch.zeros([len(val_dataloader.dataset)])
@@ -327,12 +326,13 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             weight_type = train_config.get('weight_type', 'both')
 
             if train_type == "epoch":
-                num_iters = num_iters * len(train_dl)
-                val_every = val_every * len(train_dl)
-                print_every = print_every * len(train_dl)
+                num_iters = int(num_iters * len(train_dl))
+                val_every = int(val_every * len(train_dl))
+                print_every = int(print_every * len(train_dl))
 
             x_transform,y_transform = transforms
 
+            self.device = device
             predictor = self.predictor.to(device)
             optimizer = self.predictor_optimizer
 
@@ -390,11 +390,10 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                         f"{logger_prefix}_rmse_mu" : torch.sqrt(mse_train),
                     },
                     step = (num_iter + 1),
-                    print_log = (num_iter + 1) % print_every == 0
                 )
 
                 if (num_iter + 1) % val_every == 0:
-                    val_mu, val_true = self.evaluate_predictor(val_dl, predictor, transforms, device, logger = logger)
+                    val_mu, val_true = self.evaluate_predictor(val_dl, predictor, transforms, device)
                     logger.log_metric(
                         metric_dict = {
                             f"{logger_prefix}_val_mse_mean" : torch.mean(torch.square(val_mu - val_true)),
@@ -402,7 +401,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                         },
                         step = (num_iter + 1),
                     )   
-                
+                    print(f"MSE : {torch.mean(torch.square(val_mu - val_true))}, RMSE : {torch.sqrt(torch.mean(torch.square(val_mu - val_true)))}")
                 loss_train = 0 
                 mse_train = 0 
     

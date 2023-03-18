@@ -11,3 +11,4 @@ datasets/imdb_wiki/*
 *.jpeg
 *.jpg
 *.png
+slurm_outs/

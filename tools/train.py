@@ -112,7 +112,6 @@ if __name__ == '__main__':
         ######## Create estimator #########
         estimator = create_estimator(estimator_config)
         logger.info(f"Created estimator : \n\t{estimator}")
-
         ######### Train uncertainty estimator #########
         if args.load_from is None:
             networks = estimator.train_estimator(
@@ -123,13 +122,23 @@ if __name__ == '__main__':
                 transforms = (x_transforms, y_transforms),
                 logger_prefix = f"estimator",
                 logger = metric_logger)
+            if args.checkpoint is not None:
+                logger.info(f"Saving networks to {args.checkpoint}")
+
+                checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+                if not os.path.exists(checkpoint_folder):
+                    os.makedirs(checkpoint_folder)
+                
+                for i, network in enumerate(networks):
+                    torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"estimator_network_{i}.pth"))
         else:
-            estimator.init_estimator()
-            networks = estimator.networks
+            estimator.init_estimator("estimator_network")
+            networks = estimator.estimators
 
             logger.info(f"Loading networks from {args.load_from}")
             for i, network in enumerate(networks):
-                network.load_state_dict(torch.load(os.path.join(args.load_from, f"network_{i}.pth")))
+                network.load_state_dict(torch.load(os.path.join(args.load_from, f"estimator_network_{i}.pth")))
+                network.to(device)
 
         ######## Train final predictor network #########
         predictor = estimator.train_predictor(
@@ -158,14 +167,5 @@ if __name__ == '__main__':
 
     ######### Save networks ##########
     if args.checkpoint is not None:
-        logger.info(f"Saving networks to {args.checkpoint}")
-
-        checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
-        if not os.path.exists(checkpoint_folder):
-            os.makedirs(checkpoint_folder)
-        
-        for i, network in enumerate(networks):
-            torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"estimator_network_{i}.pth"))
-
         torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
 

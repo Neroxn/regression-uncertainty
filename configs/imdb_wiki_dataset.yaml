@@ -24,11 +24,11 @@ transforms:
     - {class : MinMaxNormalize, min_val : [0], max_val : [121]}
 train:
   train_type : epoch
-  num_iter : 5
-  val_every : 1
-  weight_type : both
+  num_iter : 10
+  val_every : 0.25
+  weight_type : 'epistemic'
 logger:
   type: 'wandb'
   project: 'uncertainty-estimation'
   entity: 'kbora'
-  name: 'IMDB-WIKI R50 Weighted (Both)"
+  name: 'IMDB-WIKI R50 Weighted (Epistemic)'
