@@ -30,5 +30,5 @@ class PytorchWrapper(Transform):
         return x
     
     def __repr__(self):
-        return super().__repr__()
+        return self.transform.__repr__()
     
