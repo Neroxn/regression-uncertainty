@@ -30,7 +30,7 @@ def create_dataset(dataset_config):
 
     return dataset
 
-def create_dataloader(dataset_config, transforms : Tuple):
+def create_dataloader(dataset_config, transforms : dict):
     """
     Create a dataloader based on the config file
     """
