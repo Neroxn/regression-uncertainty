@@ -1,6 +1,6 @@
 estimator: # basic MLP layer configuration
   class: 'ensemble'
-  num_networks : 5
+  num_networks : 1
   network:
     estimator_network:
       - resnet_branch : {class : ResNet, block : Bottleneck, layers : [3,4,6,3], pred_head : LinearVarianceNetworkHead}
@@ -9,12 +9,11 @@ estimator: # basic MLP layer configuration
   optimizer:
     class : 'Adam'
     lr : 0.001
-    scheduler : {class : MultiStepLR, milestones : [60,80], gamma : 0.1}
-
+    scheduler : {class : MultiStepLR, milestones : [30,40], gamma : 0.1}
 dataset:
   class: 'imdb-wiki'
   data_dir : "regression_datasets/imdb_wiki/data"
-  batch_size : 4
+  batch_size : 64
 transforms:
     train:
       x :
@@ -32,17 +31,16 @@ transforms:
         - {class : Normalize, mean : [.5, .5, .5], std : [.5, .5, .5]}
       y : 
         - {class : MinMaxNormalize, min_val : [0], max_val : [186]}
-
 train:
-  train_type : iter
-  num_iter : 90
-  val_every : 90
+  train_type : epoch
+  num_iter : 45
+  val_every : 1
   weight_type : 'epistemic'
-# logger:
-#   type: 'wandb'
-#   project: 'uncertainty-estimation'
-#   entity: 'kbora'
-#   name: 'IMDB-WIKI R50 Weighted (Epistemic)'
+logger:
+  type: 'wandb'
+  project: 'uncertainty-estimation'
+  entity: 'kbora'
+  name: 'IMDB-WIKI R50 Weighted (Baseline)'
 metrics:
   categorize : True
   list:
@@ -52,6 +50,8 @@ metrics:
     val:
       - "rmse"
       - "mae"
+      - "gm"
     test:
       - "rmse"
       - "mae"
+      - "gm"

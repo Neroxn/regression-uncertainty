@@ -111,9 +111,8 @@ def create_imdb_wiki_dataloader(
         if age not in test_ds.age_to_frequency.keys():
             test_ds.age_to_frequency[age] = 'zero-shot'
 
-
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              drop_last=False,pin_memory=True
+                              drop_last=True,pin_memory=True
                               )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                               drop_last=False, pin_memory=True

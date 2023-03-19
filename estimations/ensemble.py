@@ -7,6 +7,8 @@ import transforms.base
 import utils.metrics
 from typing import Tuple
 import warnings
+import time
+import os
 
 torch.autograd.set_detect_anomaly(True)
 class EnsembleEstimator(estimations.base.UncertaintyEstimator):
@@ -112,7 +114,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         logger : utils.logger.NetworkLogger,
         logger_prefix : str = "estimator",
         metrics : dict = None,
-        categorize : bool = False
+        categorize : bool = False,
+        checkpoint = None
         ) -> None:
         """
         Parameters:
@@ -142,6 +145,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         print_every = train_config.get('print_every', num_iters + 1)
         train_type = train_config.get('train_type', 'iter')
 
+        # save every epoch 
+        save_every = 1
         if train_type == "epoch":
             num_iters = num_iters * len(train_dl)
             val_every = val_every * len(train_dl)
@@ -160,8 +165,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         batch_true = torch.zeros((num_networks, train_dl.batch_size))
 
         self.device = device
-        # for k in range(num_networks):
-        #     networks[k] = networks[k].to(device)
+        for k in range(num_networks):
+            networks[k] = networks[k].to(device)
 
         # for epoch based training, create iterator per network
         train_iters = []
@@ -174,11 +179,10 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 # move data to device
                 try:
                     batch_x, batch_y = next(train_iters[k]) # sample random batch
-                except StopIteration:
+                except:
                     train_iters[k] = iter(train_dl)
                     batch_x, batch_y = next(train_iters[k])
                 
-                networks[k] = networks[k].to(device)
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
 
@@ -201,7 +205,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 loss.backward()
 
                 # clamp gradients that are too big
-                torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 30.0)
+                # torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 30.0)
 
                 optimizers[k].step()
                 loss_train += loss
@@ -222,7 +226,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 else:
                     self.estimators_scheduler[k].step()
 
-                networks[k] = networks[k].to("cpu")
             # log the criterion/loss, current lr
             logger.log_metric(
                 metric_dict = {
@@ -250,42 +253,56 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                         train_average_result[key] += val
 
                     logger.log_metric(
-                        metric_dict = train_metric_list.get_metrics(add_prefix = logger_prefix + f"_train_{k}_"),
+                        metric_dict = train_metric_list.get_metrics(add_prefix = logger_prefix + f"_train_{k}"),
                         step = (num_iter + 1),
                     )
 
                 # average the metrics
                 logger.log_metric(
-                    metric_dict = {k: v/num_networks for k,v in train_average_result.items()},
+                    metric_dict = {logger_prefix + "_train_average_" + k: v/num_networks for k,v in train_average_result.items()},
                     step = (num_iter + 1),
                 )
 
-            if (num_iter + 1) % val_every == 0:
-                    val_mu, _,  val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device)
-                    val_metric_list = metrics.get("val", None)
-                    if val_metric_list is not None:
-                        if categorize:
-                            assert hasattr(val_dl.dataset, "get_categories"), "Dataset class must have get_categories method"
-                            categories = val_dl.dataset.get_categories()
+            if (num_iter + 1) % val_every == 0 or num_iter == 0:
+                val_mu, _,  val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device)
+                val_mu = transforms["val"]["y"].backward(val_mu)
+                val_true = transforms["val"]["y"].backward(val_true)
 
-                            # get category labels for all val_true
-                            val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
-                            print(val_true)
-                            for cat in np.unique(val_true_cat):
-                                cat_mask = val_true_cat == cat
-                                cat_val_true = val_true[cat_mask]
-                                cat_val_mu = val_mu[cat_mask]
+                val_metric_list = metrics.get("val", None)
+                if val_metric_list is not None:
+                    if categorize:
+                        assert hasattr(val_dl.dataset, "get_categories"), "Dataset class must have get_categories method"
+                        categories = val_dl.dataset.get_categories()
 
-                                val_metric_list.forward(cat_val_mu, cat_val_true)
-                                logger.log_metric(
-                                    metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val_" + cat),
-                                    step = (num_iter + 1),
-                                )
-                        val_metric_list.forward(val_mu, val_true)
-                        logger.log_metric(
-                            metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val_"),
-                            step = (num_iter + 1),
-                        )
+                        # get category labels for all val_true
+                        val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
+                        print(val_true_cat)
+                        print(val_true)
+                        print(categories)
+                        for cat in np.unique(val_true_cat):
+                            cat_mask = val_true_cat == cat
+                            cat_val_true = val_true[cat_mask]
+                            cat_val_mu = val_mu[cat_mask]
+
+                            val_metric_list.forward(cat_val_mu, cat_val_true)
+                            logger.log_metric(
+                                metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val_" + cat),
+                                step = (num_iter + 1),
+                            )
+                    val_metric_list.forward(val_mu, val_true)
+                    logger.log_metric(
+                        metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val"),
+                        step = (num_iter + 1),
+                    )
+
+                if checkpoint is not None:
+                    checkpoint_folder = os.path.join(checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+                    if not os.path.exists(checkpoint_folder):
+                        os.makedirs(checkpoint_folder)
+                    
+                    for i, network in enumerate(networks):
+                        torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"estimator_network_{i}.pth"))
+                        
             batch_sigma_pred = torch.zeros((num_networks, train_dl.batch_size))
             batch_pred = torch.zeros((num_networks, train_dl.batch_size))
             batch_true = torch.zeros((num_networks, train_dl.batch_size))
@@ -332,7 +349,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
             current_index += mu.shape[0]
 
-        out_mu = transforms["val"]["y"].backward(out_mu)
         out_mu_final  = torch.mean(out_mu, axis = 1).reshape(-1,1)
 
         out_sig_sample_aleatoric = torch.sqrt(torch.mean(out_sig, axis=1)) # model uncertainty
@@ -418,7 +434,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 # move data to device'
                 try:
                     batch_x, batch_y = next(iter_dl)
-                except StopIteration:
+                except:
                     iter_dl = iter(train_dl)
                     batch_x, batch_y = next(iter_dl)
 
@@ -483,7 +499,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
                             # get category labels for all val_true
                             val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
-                            print(val_true)
                             for cat in np.unique(val_true_cat):
                                 cat_mask = val_true_cat == cat
                                 cat_val_true = val_true[cat_mask]
@@ -491,12 +506,12 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
                                 val_metric_list.forward(cat_val_mu, cat_val_true)
                                 logger.log_metric(
-                                    metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_" + cat),
+                                    metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val_" + cat),
                                     step = (num_iter + 1),
                                 )
                         val_metric_list.forward(val_mu, val_true)
                         logger.log_metric(
-                            metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix),
+                            metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val"),
                             step = (num_iter + 1),
                         )
         

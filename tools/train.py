@@ -49,7 +49,9 @@ def parse_args():
     parser.add_argument(
         '--seed',
         help='Random seed to use. Use a random seed if not provided',
-        default=42)
+        default=42,
+        type = int
+        )
     parser.add_argument(
         '--save_dir',
         help='Directory to save the results',
@@ -67,7 +69,10 @@ def parse_args():
         help='Use weighted training',
         action='store_true',
         default=False)
-
+    parser.add_argument(
+        '--only_estimators',
+        action='store_true'
+    )
     return parser.parse_args()
 
 
@@ -83,7 +88,9 @@ if __name__ == '__main__':
     transform_config = config.get("transforms", None)
     logger_config = config.get("logger",None)
     metric_config = config.get("metrics",None)
-    set_random()
+
+    if args.seed != -1:
+        set_random(args.seed)
     
     ######### Create logger #########
     metric_logger = create_logger(logger_config)
@@ -135,6 +142,8 @@ if __name__ == '__main__':
                 logger_prefix = f"estimator",
                 logger = metric_logger,
                 metrics = metrics,
+                categorize = categorize,
+                checkpoint = args.checkpoint
                 )
             
             if args.checkpoint is not None:
@@ -156,27 +165,33 @@ if __name__ == '__main__':
                 network.to(device)
 
         ######## Train final predictor network #########
-        if args.load_from is None:
-            print("Training predictor network")
-            predictor = estimator.train_predictor(
-                weighted_training=args.weighted_training,
-                train_config = train_config,
-                train_dl = train_loader,
-                val_dl = val_loader,
-                device = device,
-                transforms = transforms,
-                logger = metric_logger,
-                logger_prefix = f"predictor",
-                metrics = metrics,
-                categorize = categorize
-                )
-        else:
-            estimator.init_predictor("predictor_network")
-            predictor = estimator.predictor
-            logger.log(f"Loading predictor from {args.load_from}")
-            predictor.load_state_dict(torch.load(os.path.join(args.load_from, f"predictor_network.pth")))
-            predictor.to(device)
+        if not args.only_estimators:
+            if args.load_from is None:
+                print("Training predictor network")
+                predictor = estimator.train_predictor(
+                    weighted_training=args.weighted_training,
+                    train_config = train_config,
+                    train_dl = train_loader,
+                    val_dl = val_loader,
+                    device = device,
+                    transforms = transforms,
+                    logger = metric_logger,
+                    logger_prefix = f"predictor",
+                    metrics = metrics,
+                    categorize = categorize
+                    )
+            else:
+                estimator.init_predictor("predictor_network")
+                predictor = estimator.predictor
+                logger.log(f"Loading predictor from {args.load_from}")
+                predictor.load_state_dict(torch.load(os.path.join(args.load_from, f"predictor_network.pth")))
+                predictor.to(device)
             
+            ######### Save networks ##########
+            if args.checkpoint is not None:
+                checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+                torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
+
         track_list = metric_logger.reset_track_list()
         for key, value in track_list.items():
             if key not in cv_track_list:
@@ -190,8 +205,4 @@ if __name__ == '__main__':
 
     logger.info("Training finished")
 
-    ######### Save networks ##########
-    if args.checkpoint is not None:
-        checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
-        torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
 
