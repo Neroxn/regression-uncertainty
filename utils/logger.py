@@ -113,7 +113,7 @@ class WandbLogger(NetworkLogger):
             raise ImportError("wandb is not installed")
         self.init_logger(**kwargs)
 
-    def log_metric(self, metric_dict, step, **kwargs):
+    def log_metric(self, metric_dict : dict, step, **kwargs):
         wandb.log(metric_dict, step=step)
         for k,v in metric_dict.items():
             self.track(k,v,type="list")

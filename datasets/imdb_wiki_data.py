@@ -34,23 +34,25 @@ class IMDBWIKI(Dataset):
 
         return self.x_transform.forward(img), self.y_transform.forward(label)
 
-    def get_category_bins(self, bin_size = 1):
+    def get_category_bins(self, bin_size = 1, min_label = None, max_label = None):
         """
         Divide the continious region into bins with bin_size. Assign continuous value to each bin.
         """
-        min_age = self.df['age'].min()
-        max_age = self.df['age'].max()
-
-        bins = (max_age - min_age) // bin_size + 1
-        self.df.loc[:,'age_bin'] = pd.cut(self.df.loc[:,'age'], bins = bins, labels = np.arange(bins))
-
+        if min_label is None:
+            min_label = self.df['age'].min()
+        if max_label is None:
+            max_label = self.df['age'].max()
+        bins = (max_label - min_label) // bin_size + 1
+        self.df.loc[:,'category_bin'] = pd.cut(self.df.loc[:,'age'], bins = bins, labels = np.arange(bins))
+        return min_label, max_label
+    
     def assign_frequency_label(self):
         """
         Assign frequency label to bin distribution.
         For 'many-shot' > 100 samples, 'medium-shot' 20-100 samples, 'few-shot' 1-10 samples.
         """
-        self.df.loc[:,'frequency'] = self.df.groupby('age_bin')['age_bin'].transform('count')
-        self.df.loc[:,'frequency_label'] = pd.cut(self.df.loc[:,'frequency'], bins = [0, 10, 100, np.inf], labels = ['few-shot', 'medium-shot', 'many-shot'])
+        self.df.loc[:,'frequency'] = self.df.groupby('category_bin')['category_bin'].transform('count')
+        self.df.loc[:,'frequency_label'] = pd.cut(self.df.loc[:,'frequency'], bins = [0, 5, 25, np.inf], labels = ['few-shot', 'medium-shot', 'many-shot'])
         self.df.loc[:,'frequency_label'] = self.df.loc[:,'frequency_label'].astype('category')
 
     def get_categories(self):
@@ -88,31 +90,30 @@ def create_imdb_wiki_dataloader(
     val_ds = IMDBWIKI(df_val, data_dir, transforms["val"])
     test_ds = IMDBWIKI(df_test, data_dir, transforms["test"])
 
-    print(np.unique(train_ds.df['age'].values,return_counts=True))
-    train_ds.get_category_bins(bin_size=1)
+    min_label, max_label = train_ds.get_category_bins(bin_size=1)
     train_ds.assign_frequency_label()
 
-    # get a map for age : frequency_label
-    for age in train_ds.df['age'].unique():
-        label = train_ds.df[train_ds.df['age'] == age]['frequency_label'].values[0]
-        train_ds.age_to_frequency[age] = label
+    # iterate over all bins and assign a frequency label per bin
+    for label_bin in train_ds.df["category_bin"].unique():
+        if train_ds.df[train_ds.df["age"] == label_bin].shape[0] == 0:
+            continue
+        label = train_ds.df[train_ds.df["age"] == label_bin]['frequency_label'].values[0]
+        train_ds.age_to_frequency[label_bin] = label
 
+    val_ds.get_category_bins(bin_size=1, min_label = min_label, max_label = max_label)
     val_ds.age_to_frequency = train_ds.age_to_frequency
-    min_val_age = val_ds.df['age'].min()
-    max_val_age = val_ds.df['age'].max()
-    for age in range(min_val_age, max_val_age+1):
-        if age not in val_ds.age_to_frequency.keys():
-            val_ds.age_to_frequency[age] = 'zero-shot'
+    for label_bin in val_ds.df["category_bin"].unique():
+        if label_bin not in val_ds.age_to_frequency.keys():
+            val_ds.age_to_frequency[label_bin] = 'zero-shot'
 
+    test_ds.get_category_bins(bin_size=1, min_label = min_label, max_label = max_label)
     test_ds.age_to_frequency = train_ds.age_to_frequency
-    min_test_age = test_ds.df['age'].min()
-    max_test_age = test_ds.df['age'].max()
-    for age in range(min_test_age, max_test_age+1):
-        if age not in test_ds.age_to_frequency.keys():
-            test_ds.age_to_frequency[age] = 'zero-shot'
-
+    for label_bin in test_ds.df["category_bin"].unique():
+        if label_bin not in test_ds.age_to_frequency.keys():
+            test_ds.age_to_frequency[label_bin] = 'zero-shot'
+    
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              drop_last=True,pin_memory=True
+                              drop_last=False,pin_memory=True
                               )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                               drop_last=False, pin_memory=True

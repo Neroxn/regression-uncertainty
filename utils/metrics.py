@@ -62,7 +62,7 @@ class MetricList:
     @torch.no_grad()
     def forward(self, y_pred, y_true, **kwargs):
         for metric in self.metric_list:
-            self.metrics[str(metric)] = metric(y_pred, y_true, **kwargs)
+            self.metrics[str(metric)] = float(metric(y_pred, y_true, **kwargs))
 
     def __repr__(self) -> str:
         base = "MetricList("

@@ -13,6 +13,8 @@ for name in dir(torch.optim.lr_scheduler):
 def create_scheduler(optimizer, cfg_):
     """Build schedulers from config"""
     cfg = deepcopy(cfg_)
+    if cfg is None:
+        return None
     scheduler_class = cfg.pop("class")
     if scheduler_class not in SCHEDULER_REGISTRY:
         raise ValueError(f"Unknown scheduler : {scheduler_class}")

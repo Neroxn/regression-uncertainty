@@ -54,25 +54,14 @@ def parse_args():
         )
     parser.add_argument(
         '--checkpoint',
-        help='Checkpoint to load the model',
+        help='Checkpoint to save the model',
         default=None)
     parser.add_argument(
-        '--load_from',
-        help='Load the model from a checkpoint',
-        default=None)
+        '--load_estimator_from',
+        help='Load the model from a checkpoint', required=True)
     parser.add_argument(
-        '--weighted_training',
-        help='Use weighted training',
-        action='store_true',
-        default=False)
-    parser.add_argument(
-        '--only_estimators',
-        action='store_true'
-    )
-    parser.add_argument(
-        '--run_name',
-        help='Name of the run. Will be used if checkpoint is provided',
-        default=None)
+        '--load_predictor_from',
+        help='Load the model from a checkpoint', required=True)
     return parser.parse_args()
 
 
@@ -124,74 +113,53 @@ if __name__ == '__main__':
 
     ######### Start Cross-Validation (Optional, if cv_split_num is 1, it is a regular training) #########
     cv_track_list = {}
-    for i,(train_loader, val_loader, test_loader) in enumerate(dl_split_iterator):
+    for i,(_, val_loader, test_loader) in enumerate(dl_split_iterator):
 
         ######## Create estimator #########
         estimator = create_estimator(estimator_config, num_networks=estimator_config.get("num_networks",0))
         logger.info(f"Created estimator : \n\t{estimator.estimators}")
 
-        ######### Train uncertainty estimator #########
-        if args.load_from is None:
-            networks = estimator.train_estimator(
-                train_config = train_config,
-                train_dl = train_loader,
-                val_dl = val_loader,
-                device = device,
-                transforms = transforms,
-                logger_prefix = f"estimator",
-                logger = metric_logger,
-                metrics = metrics,
-                categorize = categorize,
-                checkpoint = args.checkpoint
-                )
-            
-            if args.checkpoint is not None:
-                logger.info(f"Saving networks to {args.checkpoint}")
-
-                checkpoint_folder = os.path.join(args.checkpoint, time.strftime("%Y%m%d-%H%M%S"))
-                if not os.path.exists(checkpoint_folder):
-                    os.makedirs(checkpoint_folder)
-                
-                for i, network in enumerate(networks):
-                    torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"estimator_network_{i}.pth"))
-        else:
+        ######### Load uncertainity estimator #########
+        if args.load_estimator_from:
             estimator.init_estimator("estimator_network")
             networks = estimator.estimators
 
-            #logger.info(0,f"Loading estimators from {args.load_from}")
             for i, network in enumerate(networks):
                 network.load_state_dict(torch.load(os.path.join(args.load_from, f"estimator_network_{i}.pth")))
                 network.to(device)
-
-        ######## Train final predictor network #########
-        if not args.only_estimators:
-            print("Training predictor network")
-            predictor = estimator.train_predictor(
-                weighted_training=args.weighted_training,
-                train_config = train_config,
-                train_dl = train_loader,
-                val_dl = val_loader,
-                device = device,
-                transforms = transforms,
-                logger = metric_logger,
-                logger_prefix = f"predictor",
-                metrics = metrics,
-                categorize = categorize,
-                checkpoint = args.checkpoint
-                )
             
-            ######### Save networks ##########
-            if args.checkpoint is not None:
-                checkpoint_folder = os.path.join(args.checkpoint, args.run_name if args.run_name else time.strftime("%Y%m%d-%H%M%S"))
-                if not os.path.exists(checkpoint_folder):
-                    os.makedirs(checkpoint_folder)
-                torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
+        ######### Load predictor #########
+        if args.load_predictor_from:
+            estimator.init_predictor("predictor_network")
+            predictor = estimator.predictor
+            logger.log(f"Loading predictor from {args.load_from}")
+            predictor.load_state_dict(torch.load(os.path.join(args.load_from, f"predictor_network.pth")))
+            predictor.to(device)
+            
+        ######### Test the predictor #########
+        val_mu, val_true = estimator.evaluate_predictor(val_loader, predictor, transforms, device)
+        val_metric_list = metrics.get("val", None)
+        if val_metric_list is not None:
+            if categorize:
+                assert hasattr(val_loader.dataset, "get_categories"), "Dataset class must have get_categories method"
+                categories = val_loader.dataset.get_categories()
 
-        track_list = metric_logger.reset_track_list()
-        for key, value in track_list.items():
-            if key not in cv_track_list:
-                cv_track_list[key] = []
-            cv_track_list[key].append(value[-1])
+                # get category labels for all val_true
+                val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
+                for cat in np.unique(val_true_cat):
+                    cat_mask = val_true_cat == cat
+                    cat_val_true = val_true[cat_mask]
+                    cat_val_mu = val_mu[cat_mask]
+
+                    val_metric_list.forward(cat_val_mu, cat_val_true)
+                    logger.log_metric(
+                        metric_dict = val_metric_list.get_metrics(add_prefix = "predictor_val_" + cat),
+                        step = 0,
+                    )
+            val_metric_list.forward(val_mu, val_true)
+            logger.log_metric(
+                metric_dict = val_metric_list.get_metrics(add_prefix = "predictor_val"),
+                step = 0)
 
     for key, value in cv_track_list.items():
         metric_mean = np.mean(value)

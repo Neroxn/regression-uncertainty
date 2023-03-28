@@ -9,7 +9,9 @@ class LinearVarianceNetworkHead(torch.nn.Module):
 
     def forward(self, x):
         mu = self.mu(x)
-        log_var = torch.log(1 + torch.exp(self.log_var(x))) + 1e-6
+        log_var = self.log_var(x)
+        log_var = torch.clamp(log_var, max=15) # e^
+        log_var = torch.log(1 + torch.exp(log_var)) + 1e-6
         return mu, log_var
     
 
@@ -22,6 +24,9 @@ class Conv2DVarianceNetworkHead(torch.nn.Module):
 
     def forward(self, x):
         mu = self.mu(x)
-        log_var = torch.log(1 + torch.exp(self.log_var(x))) + 1e-6
+        log_var = self.log_var(x)
+        # clamp log var to avoid numerical instability
+        log_var = torch.clamp(log_var, min=-7, max=7) 
+        log_var = torch.log(1 + torch.exp(log_var)) + 1e-6
         return mu, log_var
 

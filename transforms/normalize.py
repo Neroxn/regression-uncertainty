@@ -78,7 +78,6 @@ class Standardize(transforms.base.Transform):
 
         x = (x - self.mean) / self.std
 
-        print(x)
         return x
 
     def backward(self, x : torch.Tensor) -> torch.Tensor:

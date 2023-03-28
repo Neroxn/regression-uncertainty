@@ -1,0 +1,61 @@
+estimator: # basic MLP layer configuration
+  class: 'ensemble'
+  num_networks : 5
+  network:
+    estimator_network:
+      - fc1 : {class : Linear, in_features : 13, out_features : 50}
+      - projection : {class : LinearVarianceNetworkHead, in_features : 50, out_features : 1}
+    predictor_network: 
+      - fc1 : {class : Linear, in_features : 13, out_features : 50}
+      - projection : {class : Linear, in_features : 50, out_features : 1}
+  optimizer:
+    class : 'Adam'
+    lr : 0.1
+dataset:
+  class: 'xls'
+  xls_path: "regression_datasets/boston.csv"
+  batch_size : 100
+  cv_split_num: 5
+  test_ratio: 0.10
+transforms:
+    train:
+      x :
+        - {
+          class : Standardize,
+          mean : [3.613523557312254, 11.363636363636363, 11.13677865612648, 0.0691699604743083, 0.5546950592885376, 6.284634387351779, 68.57490118577076, 3.795042687747036, 9.549407114624506, 408.2371541501976, 18.455533596837945, 356.6740316205534, 12.653063241106722], 
+          std : [8.60154510533249, 23.32245299451514, 6.860352940897585, 0.25399404134041037, 0.11587767566755595, 0.7026171434153233, 28.148861406903617, 2.105710126627611, 8.707259384239366, 168.53711605495903, 2.1649455237144406, 91.29486438415783, 7.141061511348571]
+          }
+      y :
+        - {class : Standardize, mean : [22.532806324110677], std : [9.197104087379818]}
+    val:
+      x :
+        - {
+          class : Standardize,
+          mean : [3.613523557312254, 11.363636363636363, 11.13677865612648, 0.0691699604743083, 0.5546950592885376, 6.284634387351779, 68.57490118577076, 3.795042687747036, 9.549407114624506, 408.2371541501976, 18.455533596837945, 356.6740316205534, 12.653063241106722], 
+          std : [8.60154510533249, 23.32245299451514, 6.860352940897585, 0.25399404134041037, 0.11587767566755595, 0.7026171434153233, 28.148861406903617, 2.105710126627611, 8.707259384239366, 168.53711605495903, 2.1649455237144406, 91.29486438415783, 7.141061511348571]
+          }
+      y :
+        - {class : Standardize, mean : [22.532806324110677], std : [9.197104087379818]}
+train:
+  train_type : epoch
+  num_iter : 40
+  weight_type : both
+# logger:
+#   type: 'wandb'
+#   project: 'uncertainty-estimation'
+#   entity: 'kbora'
+#   name: 'Boston Dataset (Baseline,MAE)'
+metrics:
+  categorize : True
+  list:
+    train:
+      - "rmse"
+      - "mae"
+    val:
+      - "rmse"
+      - "mae"
+      - "gm"
+    test:
+      - "rmse"
+      - "mae"
+      - "gm"

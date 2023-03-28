@@ -10,6 +10,21 @@ import warnings
 import time
 import os
 
+def warmup(weights, epoch, max_epoch):
+    """
+    Warmup function for the weights of the ensemble estimator
+    Arguments:
+        weights: Weights of the ensemble estimator
+        epoch: Current epoch
+        max_epoch: Maximum number of epochs
+    Returns:
+        weights: Updated weights
+    """
+    if epoch > max_epoch:
+        epoch = max_epoch
+    alpha =  (1 - np.cos(np.pi * epoch / (2*max_epoch)) ** 2)
+    return weights * alpha + (1 - alpha) * np.ones(weights.shape)
+
 torch.autograd.set_detect_anomaly(True)
 class EnsembleEstimator(estimations.base.UncertaintyEstimator):
     def __init__(self, network_config, optimizer_config, num_networks = 5):
@@ -87,14 +102,16 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         out_sig_sample_epistemic = torch.mean(torch.square(out_mu), axis = 1) - torch.square(out_mu_final)  # data uncertainty
     
         # replace 0 for all the elements in out_sig_sample_epistemic that is less than 0
-        out_sig_sample_epistemic[out_sig_sample_epistemic < 0] = 0
-
         if weight_type == "both":
-            out_sig_pred =  torch.sqrt(out_sig_sample_aleatoric + out_sig_sample_epistemic)
+            out_sig_var = out_sig_sample_aleatoric + out_sig_sample_epistemic
+            out_sig_var[out_sig_var < 0] = 0
+            out_sig_pred =  torch.sqrt(out_sig_var) # safety check
         elif weight_type == "aleatoric":
-            out_sig_pred = torch.sqrt(out_sig_sample_aleatoric)
+            out_sig_sample_aleatoric[out_sig_sample_aleatoric < 0] = 0
+            out_sig_pred = torch.sqrt(out_sig_sample_aleatoric) #safety check
         elif weight_type == "epistemic":
-            out_sig_pred =  torch.sqrt(out_sig_sample_epistemic)
+            out_sig_sample_epistemic[out_sig_sample_epistemic < 0] = 0
+            out_sig_pred =  torch.sqrt(out_sig_sample_epistemic) #safety check
         else:
             raise ValueError("Weight type not supported. Please choose from aleatoric, epistemic, both")
         
@@ -145,6 +162,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         print_every = train_config.get('print_every', num_iters + 1)
         train_type = train_config.get('train_type', 'iter')
 
+        if checkpoint:
+            start_time = time.strftime("%Y%m%d-%H%M%S")
         # save every epoch 
         save_every = 1
         if train_type == "epoch":
@@ -160,10 +179,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         optimizers = self.estimators_optimizer
         num_networks = len(networks)
 
-        batch_sigma_pred = torch.zeros((num_networks, train_dl.batch_size))
-        batch_pred = torch.zeros((num_networks, train_dl.batch_size))
-        batch_true = torch.zeros((num_networks, train_dl.batch_size))
-
         self.device = device
         for k in range(num_networks):
             networks[k] = networks[k].to(device)
@@ -174,7 +189,12 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             train_iters.append(iter(train_dl))
 
         for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
+            # initialize values for tracking
             loss_train = 0
+            batch_sigma_pred = torch.zeros((num_networks, train_dl.batch_size))
+            batch_pred = torch.zeros((num_networks, train_dl.batch_size))
+            batch_true = torch.zeros((num_networks, train_dl.batch_size))
+
             for k in range(num_networks):
                 # move data to device
                 try:
@@ -183,29 +203,26 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                     train_iters[k] = iter(train_dl)
                     batch_x, batch_y = next(train_iters[k])
                 
-                batch_x = batch_x.to(device)
-                batch_y = batch_y.to(device)
+                batch_x = batch_x.to(device).float()
+                batch_y = batch_y.to(device).float()
 
                 # get the network prediction for the training data
                 mu_train, sigma_train = networks[k](batch_x)
-
                 loss = torch.mean(
                     (0.5*torch.log(sigma_train) + 0.5*(torch.square(batch_y - mu_train))/sigma_train)
                     + 5) 
-                    
-                #mse loss
-                loss = torch.mean(
-                    torch.square(batch_y - mu_train)
-                    )
+
                 if torch.isnan(loss):
                     raise ValueError('Loss is NaN')
 
                 # calculate the loss and update the weights
                 optimizers[k].zero_grad()
+
+                # log(1 + exp(x)) derivative is 
                 loss.backward()
 
                 # clamp gradients that are too big
-                # torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 30.0)
+                torch.nn.utils.clip_grad_norm_(networks[k].parameters(), 30.0)
 
                 optimizers[k].step()
                 loss_train += loss
@@ -215,17 +232,20 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 batch_y_transformed = transforms["train"]["y"].backward(batch_y)
                 mu_train_transformed = transforms["train"]["y"].backward(mu_train)
 
-                batch_pred[k] = mu_train_transformed.reshape(-1)
-                batch_true[k] = batch_y_transformed.reshape(-1)
-                batch_sigma_pred[k] = sigma_train.reshape(-1)
+                # also handle the last batches
+                batch_pred[k, :batch_x.shape[0]] = mu_train_transformed.reshape(-1)
+                batch_true[k, :batch_x.shape[0]] = batch_y_transformed.reshape(-1)
+                batch_sigma_pred[k, :batch_x.shape[0]] = sigma_train.reshape(-1)
 
                 if train_type == 'epoch':
                     # if epoch is passed
                     if (num_iter + 1) % len(train_dl) == 0:
-                        self.estimators_scheduler[k].step()
+                        if self.estimators_scheduler[k] is not None:
+                            self.estimators_scheduler[k].step()
                 else:
-                    self.estimators_scheduler[k].step()
-
+                    if self.estimators_scheduler[k] is not None:
+                        self.estimators_scheduler[k].step()
+                        
             # log the criterion/loss, current lr
             logger.log_metric(
                 metric_dict = {
@@ -239,9 +259,9 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             if train_metric_list is not None:
                 train_average_result = {}
                 for k in range(num_networks):
-                    y_true = batch_true[k]
-                    y_pred = batch_pred[k]
-                    sigma_pred = batch_sigma_pred[k]
+                    y_true = batch_true[k,:batch_x.shape[0]]
+                    y_pred = batch_pred[k,:batch_x.shape[0]]
+                    sigma_pred = batch_sigma_pred[k,:batch_x.shape[0]]
 
                     # calculate the metrics
                     train_metric_list.forward(y_pred = y_pred, y_true = y_true, sigma_pred = sigma_pred)
@@ -262,8 +282,9 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                     metric_dict = {logger_prefix + "_train_average_" + k: v/num_networks for k,v in train_average_result.items()},
                     step = (num_iter + 1),
                 )
+                
 
-            if (num_iter + 1) % val_every == 0 or num_iter == 0:
+            if (num_iter + 1) % val_every == 0:
                 val_mu, _,  val_true = self.evaluate_multiple_networks(val_dl, networks, transforms, device)
                 val_mu = transforms["val"]["y"].backward(val_mu)
                 val_true = transforms["val"]["y"].backward(val_true)
@@ -276,9 +297,6 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
 
                         # get category labels for all val_true
                         val_true_cat = np.array([categories.get(int(val_true[i]),"zero-shot") for i in range(len(val_true))])
-                        print(val_true_cat)
-                        print(val_true)
-                        print(categories)
                         for cat in np.unique(val_true_cat):
                             cat_mask = val_true_cat == cat
                             cat_val_true = val_true[cat_mask]
@@ -296,16 +314,12 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                     )
 
                 if checkpoint is not None:
-                    checkpoint_folder = os.path.join(checkpoint, time.strftime("%Y%m%d-%H%M%S"))
+                    checkpoint_folder = os.path.join(checkpoint, start_time)
                     if not os.path.exists(checkpoint_folder):
                         os.makedirs(checkpoint_folder)
                     
                     for i, network in enumerate(networks):
                         torch.save(network.state_dict(), os.path.join(checkpoint_folder,f"estimator_network_{i}.pth"))
-                        
-            batch_sigma_pred = torch.zeros((num_networks, train_dl.batch_size))
-            batch_pred = torch.zeros((num_networks, train_dl.batch_size))
-            batch_true = torch.zeros((num_networks, train_dl.batch_size))
     
         return networks
 
@@ -336,8 +350,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 batch_x = batch[0]
                 batch_y = torch.zeros((batch_x.shape[0], 1))
             batch_y_true[current_index: current_index + batch_y.shape[0],0] = batch_y.reshape((batch_y.shape[0])).cpu()
-            batch_x = batch_x.to(device)
-            batch_y = batch_y.to(device)
+            batch_x = batch_x.to(device).float()
+            batch_y = batch_y.to(device).float()
 
             for j in range(num_networks):
                 # move network to device
@@ -358,7 +372,7 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
         return out_mu_final, out_sig_sample_aleatoric + out_sig_sample_epistemic, batch_y_true
     
 
-    def evaluate_predictor(self, val_dataloader, predictor, transforms, device, **kwargs):
+    def evaluate_predictor(self, val_dataloader, predictor, transforms, device,**kwargs):
         """
         Evaluate the ensamble of networks.
         Args:
@@ -385,8 +399,8 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 batch_x = batch[0]
                 batch_y = torch.zeros((batch_x.shape[0], 1))
             batch_y_true[current_index: current_index + batch_y.shape[0],0] = batch_y.reshape((batch_y.shape[0])).cpu()
-            batch_x = batch_x.to(device)
-            batch_y = batch_y.to(device)
+            batch_x = batch_x.to(device).float()
+            batch_y = batch_y.to(device).float()
 
             with torch.no_grad():
                 mu = predictor(batch_x)         
@@ -408,18 +422,22 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             device : torch.device,
             transforms : dict,
             logger : utils.logger.NetworkLogger,
-            logger_prefix : str = "estimator",
+            logger_prefix : str = "predictor",
             weighted_training = False,
             metrics : dict= None,
             categorize : bool = False,
+            checkpoint = None
             ) -> None:
             
-            num_iters = train_config.get("num_iter", 1000)
+            num_iters = train_config.get('num_iter', 100)
             val_every = train_config.get('val_every', num_iters)
             print_every = train_config.get('print_every', num_iters + 1)
             train_type = train_config.get('train_type', 'iter')
             weight_type = train_config.get('weight_type', 'both')
 
+            if checkpoint:
+                save_time = time.strftime("%Y%m%d-%H%M%S")
+                
             if train_type == "epoch":
                 num_iters = int(num_iters * len(train_dl))
                 val_every = int(val_every * len(train_dl))
@@ -428,8 +446,9 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
             self.device = device
             predictor = self.predictor.to(device)
             optimizer = self.predictor_optimizer
-
             iter_dl = iter(train_dl)
+            #TODO : Run the dataloader once to calculate weights beforehand.
+            
             for num_iter in tqdm.tqdm(range(num_iters), position=0, leave=True):
                 # move data to device'
                 try:
@@ -438,15 +457,16 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                     iter_dl = iter(train_dl)
                     batch_x, batch_y = next(iter_dl)
 
-                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+                batch_x = batch_x.to(device).float()
+                batch_y = batch_y.to(device).float()
 
                 mu_train = predictor(batch_x)
                 # calculate weight per sample
                 if weighted_training:
                     weights = self._calculate_weights(batch_x,batch_y, weight_type = weight_type).detach().to(device)
-                    loss = torch.mean(torch.square(mu_train - batch_y) * weights)
+                    loss = torch.mean(torch.abs(mu_train - batch_y) * weights)
                 else:
-                    loss = torch.mean(torch.square(mu_train - batch_y))
+                    loss = torch.mean(torch.abs(mu_train - batch_y))
                     
                 if torch.isnan(loss):
                     raise ValueError('Loss is NaN')
@@ -455,17 +475,19 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                 optimizer.zero_grad()
                 loss.backward()
 
-                # clamp gradients that are too big
-                # torch.nn.utils.clip_grad_norm_(predictor.parameters(), 30.0)
+                # clip the gradients
+                torch.nn.utils.clip_grad_norm_(predictor.parameters(), 10.0)
 
                 optimizer.step()
 
                 if train_type == 'epoch':
                     # if epoch is passed
                     if (num_iter + 1) % len(train_dl) == 0:
-                        self.predictor_scheduler.step()
+                        if self.predictor_scheduler is not None:
+                            self.predictor_scheduler.step()
                 else:
-                    self.predictor_scheduler.step()
+                    if self.predictor_scheduler is not None:
+                        self.predictor_scheduler.step()
 
                 mu_train = mu_train.detach()
                 
@@ -514,5 +536,9 @@ class EnsembleEstimator(estimations.base.UncertaintyEstimator):
                             metric_dict = val_metric_list.get_metrics(add_prefix = logger_prefix + "_val"),
                             step = (num_iter + 1),
                         )
-        
+                    if checkpoint is not None:
+                        checkpoint_folder = os.path.join(checkpoint, save_time)
+                        if not os.path.exists(checkpoint_folder):
+                            os.makedirs(checkpoint_folder)
+                        torch.save(predictor.state_dict(), os.path.join(checkpoint_folder,f"predictor_network.pth"))
             return predictor

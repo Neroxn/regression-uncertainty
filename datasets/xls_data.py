@@ -4,6 +4,7 @@ import numpy as np
 from typing import *
 import matplotlib.pyplot as plt
 from sklearn.utils import shuffle
+import seaborn as sns
 import os
 import pandas as pd
  
@@ -21,45 +22,23 @@ class XLSParser():
         else:
             self.data = pd.read_excel(self.xls_path)
 
-    def parse(self, x_col : Optional[list], y_col : Optional[list]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Parse the data into x and y values.
-
-        Args:
-            - x_col (Optional[list]) : Column index of the x values. If None, all columns except the last one will be used.
-            - y_col (Optional[list]) : Column index of the y values. If None, the last column will be used.
-        
-        Returns:
-            - x (np.ndarray) : x values.
-            - y (np.ndarray) : y values.
-        """
-        if x_col is None and y_col is None:
-            self.x = self.data.iloc[:, :-1].values
-            self.y = self.data.iloc[:, -1].values
-        elif x_col is None:
-            self.y = self.data.iloc[:, y_col].values
-            self.x = self.data.drop(self.data.columns[y_col], axis=1).values
-        elif y_col is None:
-            self.x = self.data.iloc[:, x_col].values
-            self.y = self.data.drop(self.data.columns[x_col], axis=1).values
-        else:
-            self.x = self.data.iloc[:, x_col].values
-            self.y = self.data.iloc[:, y_col].values
-
-        # assure that the data is in the right shape
-        if len(self.x.shape) == 1:
-            self.x = self.x.reshape(-1, 1)
-        if len(self.y.shape) == 1:
-            self.y = self.y.reshape(-1, 1)
-
-        return self.x, self.y
-        
 class XLSDataset(Dataset):
-    def __init__(self, x : np.array, y : np.array, transforms : Tuple):
-        self.x = np.array(x, dtype = np.float32)
-        self.y = np.array(y, dtype = np.float32)
+    def __init__(self, df, x_col : Optional[list] = None, y_col : Optional[list] = None, transforms : Optional[dict] = None,**kwargs):
+        self.df = df
+        if x_col is None:
+            x_col = self.df.columns[:-1]
+        if y_col is None:
+            y_col = self.df.columns[-1]
+        self.x, self.y = self.df[x_col].values,self.df[y_col].values
+        self.x_col, self.y_col = x_col, y_col
 
-        self.x_transform, self.y_transform = transforms
+        if transforms is None:
+            self.x_transform = lambda x: x
+            self.y_transform = lambda x: x
+        else:
+            self.x_transform, self.y_transform = transforms.get('x'), transforms.get('y')
+
+        self.age_to_frequency = {}
 
     def __len__(self):
         """
@@ -71,7 +50,47 @@ class XLSDataset(Dataset):
         """
         Transform the data to torch.Tensor
         """
-        return self.x_transform(self.x[idx]), self.y_transform(self.y[idx])
+
+        x_np = np.array(self.x[idx]).astype('float32')
+        y_np = np.array(self.y[idx]).astype('float32')
+
+        # transform x_np and y_np into tensors with torch.float32
+        x_tensor = torch.from_numpy(x_np).float()
+        y_tensor = torch.from_numpy(y_np).float()
+        x_transformed = self.x_transform.forward(x_tensor)
+        y_transformed = self.y_transform.forward(y_tensor)
+
+        # return tensor
+        return x_transformed, y_transformed
+
+
+    def get_category_bins(self, bin_size = 1, min_label = None, max_label = None):
+            """
+            Divide the continious region into bins with bin_size. Assign continuous value to each bin.
+            """
+            if min_label is None:
+                min_label = self.df[self.y_col].min()
+            if max_label is None:
+                max_label = self.df[self.y_col].max()
+
+            bins = int((max_label - min_label) // bin_size + 1)
+            self.df.loc[:,'category_bin'] = pd.cut(self.df.loc[:,self.y_col], bins = bins, labels = np.arange(bins))
+            return min_label, max_label
+
+    def assign_frequency_label(self):
+        """
+        Assign frequency label to bin distribution.
+        For 'many-shot' > 100 samples, 'medium-shot' 20-100 samples, 'few-shot' 1-10 samples.
+        """
+        self.df.loc[:,'frequency'] = self.df.groupby('category_bin')['category_bin'].transform('count')
+        self.df.loc[:,'frequency_label'] = pd.cut(self.df.loc[:,'frequency'], bins = [0, 10, 100, np.inf], labels = ['few-shot', 'medium-shot', 'many-shot'])
+        self.df.loc[:,'frequency_label'] = self.df.loc[:,'frequency_label'].astype('category')
+
+    def get_categories(self):
+        """
+        Given continious values of y, return the category of the y.
+        """
+        return self.age_to_frequency
 
 
 def create_xls_dataloader(
@@ -82,6 +101,7 @@ def create_xls_dataloader(
         test_ratio : float = 0.2,
         x_col : Optional[list] = None,
         y_col : Optional[list] = None,
+        split_test_val : bool = True,
         **kwargs):
     """
     A simple dataloader for the reading XLS/CSV files. The data will be split into a training and validation set.
@@ -104,25 +124,73 @@ def create_xls_dataloader(
     """
 
     parser = XLSParser(xls_path)
-    x, y = parser.parse(x_col, y_col)
-    num_test = int(x.shape[0] * test_ratio)
-
-    if batch_size == -1:
-        batch_size = x.shape[0]
-        
+    df = parser.data
+    num_test = int(df.shape[0] * test_ratio) # half of the test set will be used for validation
+    
     # create train and test data for cross validation
     for _ in range(cv_split_num):
-        x, y = shuffle(x, y)
-        test_x,test_y = x[:num_test], y[:num_test]
-        train_x, train_y = x[num_test:], y[num_test:]
+        # pick random seperate indices for train set, test set and validation set
+        train_idx = np.random.choice(df.index, size = df.shape[0] - num_test, replace = False)
+        val_idx = np.random.choice(list(set(df.index) - set(train_idx)), size = num_test, replace = False)
+        # val_idx = np.random.choice(test_idx, size = num_test//2, replace = False)
+        # test_idx = list(set(test_idx) - set(val_idx))
 
-        # create dataloader
-        train_dataset = XLSDataset(train_x, train_y, transforms)
-        val_dataset = XLSDataset(test_x, test_y, transforms)
+        # split the data
+        df_train, df_val,  = df.loc[train_idx], df.loc[val_idx]
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        # create datasets
+        train_ds = XLSDataset(df_train, x_col, y_col, transforms["train"])
+        val_ds = XLSDataset(df_val, x_col, y_col, transforms["val"])
+        #test_ds = XLSDataset(df_test, x_col, y_col, transforms["test"])
 
-        yield train_loader, val_loader, train_dataset, val_dataset
+        min_label, max_label = train_ds.get_category_bins(bin_size=1)
+        train_ds.assign_frequency_label()
 
-    
+        # iterate over all bins and assign a frequency label per bin
+        for label_bin in train_ds.df["category_bin"].unique():
+            if train_ds.df[train_ds.df[train_ds.y_col] == label_bin].shape[0] == 0:
+                continue
+            label = train_ds.df[train_ds.df[train_ds.y_col] == label_bin]['frequency_label'].values[0]
+            train_ds.age_to_frequency[label_bin] = label
+
+        val_ds.get_category_bins(bin_size=1, min_label = min_label, max_label = max_label)
+        val_ds.age_to_frequency = train_ds.age_to_frequency
+        for label_bin in val_ds.df["category_bin"].unique():
+            if label_bin not in val_ds.age_to_frequency.keys():
+                val_ds.age_to_frequency[label_bin] = 'zero-shot'
+
+        # test_ds.get_category_bins(bin_size=1, min_label = min_label, max_label = max_label)
+        # test_ds.age_to_frequency = train_ds.age_to_frequency
+        # for label_bin in test_ds.df["category_bin"].unique():
+        #     if label_bin not in test_ds.age_to_frequency.keys():
+        #         test_ds.age_to_frequency[label_bin] = 'zero-shot'
+        
+        if batch_size == -1:
+            batch_size = len(train_ds)
+
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                                drop_last=False,pin_memory=True
+                                )
+        val_loader = DataLoader(val_ds, batch_size=1, shuffle=False,
+                                drop_last=False, pin_memory=True
+                                )
+        
+        print(f"Train set size : {len(train_ds)}")
+        print(f"Val set size : {len(val_ds)}")
+        # test_loader = DataLoader(test_ds, batch_size=1, shuffle=False,
+        #                         drop_last=False, pin_memory=True
+        #                         )
+        yield train_loader, val_loader, None
+
+if __name__ == "__main__":
+    parser = XLSParser('regression_datasets/Concrete_Data.xls')
+    df = parser.data
+    ds = XLSDataset(df)
+    # get the mean and std of the all x values
+    print(f"x_cols : {ds.x_col}, y_col : {ds.y_col}")
+    x_mean = ds.df[ds.x_col].mean()
+    x_std = ds.df[ds.x_col].std()
+    print([m for m in x_mean])
+    print([s for s in x_std])
+    print(ds.df[ds.y_col].mean(), ds.df[ds.y_col].std())
+

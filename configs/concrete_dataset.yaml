@@ -1,0 +1,62 @@
+estimator: # basic MLP layer configuration
+  class: 'ensemble'
+  num_networks : 5
+  network:
+    estimator_network:
+      - fc1 : {class : Linear, in_features : 8, out_features : 50}
+      - projection : {class : LinearVarianceNetworkHead, in_features : 50, out_features : 1}
+    predictor_network: 
+      - fc1 : {class : Linear, in_features : 8, out_features : 50}
+      - projection : {class : Linear, in_features : 50, out_features : 1}
+  optimizer:
+    class : 'Adam'
+    lr : 0.01
+dataset:
+  class: 'xls'
+  xls_path: "regression_datasets/Concrete_Data.xls"
+  batch_size : 512
+  cv_split_num: 1
+  test_ratio: 0.10
+transforms:
+    train:
+      x :
+        - {
+          class : Standardize,
+          mean : [281.16563106796116, 73.89548543689321, 54.1871359223301, 181.56635922330096, 6.203111650485437, 972.9185922330097, 773.5788834951456, 45.662135922330094], 
+          std : [104.5071416428718, 86.27910364316895, 63.99646938186508, 21.355567066911522, 5.973491650590111, 77.75381809178927, 80.1754273990239, 63.16991158103249]
+          }
+      y :
+        - {class : Standardize, mean : [35.8178358261136], std : [16.705679174867946]}
+    val:
+      x : 
+        - {
+          class : Standardize,
+          mean : [281.16563106796116, 73.89548543689321, 54.1871359223301, 181.56635922330096, 6.203111650485437, 972.9185922330097, 773.5788834951456, 45.662135922330094], 
+          std : [104.5071416428718, 86.27910364316895, 63.99646938186508, 21.355567066911522, 5.973491650590111, 77.75381809178927, 80.1754273990239, 63.16991158103249]
+          }
+      y : 
+        - {class : Standardize, mean : [35.8178358261136], std : [16.705679174867946]}
+train:
+  train_type : epoch
+  num_iter : 40
+  val_every : 40
+  weight_type : both
+# logger:
+#   type: 'wandb'
+#   project: 'uncertainty-estimation'
+#   entity: 'kbora'
+#   name: 'Concrete Dataset (Baseline,MAE)'
+metrics:
+  categorize : True
+  list:
+    train:
+      - "rmse"
+      - "mae"
+    val:
+      - "rmse"
+      - "mae"
+      - "gm"
+    test:
+      - "rmse"
+      - "mae"
+      - "gm"
